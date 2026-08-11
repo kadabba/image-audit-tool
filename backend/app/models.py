@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, func
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, DateTime, UniqueConstraint
+from sqlalchemy.orm import declarative_base
 from datetime import datetime
 
 Base = declarative_base()
@@ -8,17 +8,16 @@ Base = declarative_base()
 class Image(Base):
     __tablename__ = "images"
 
-    id = Column(Integer, primary_key=True)
-    site_url = Column(String, nullable=False, index=True)
-    image_url = Column(String, nullable=False)
-    page_url = Column(String, nullable=False)
-    status = Column(String, default="NEW", nullable=False)  # NEW, KEEP, DELETE
+    id = Column(Integer, primary_key=True, index=True)
+    site_url = Column(String(255), nullable=False, index=True)
+    image_url = Column(String(2048), nullable=False)
+    page_url = Column(String(2048), nullable=False)
+    status = Column(String(20), default="NEW", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     __table_args__ = (
-        # Уникальный ключ: одна запись на (site_url, image_url, page_url)
-        {"sqlite_table_options": "UNIQUE(site_url, image_url, page_url)"},
+        UniqueConstraint("site_url", "image_url", "page_url", name="uq_site_image_page"),
     )
 
     def to_dict(self):

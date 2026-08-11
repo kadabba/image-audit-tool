@@ -49,14 +49,15 @@ async function startScan() {
 
 async function loadGallery() {
     try {
-        const params = new URLSearchParams({
-            page: currentPage,
-            limit: PAGE_SIZE,
-            ...filters
-        });
+        const params = new URLSearchParams();
+        params.append('page', currentPage);
+        params.append('limit', PAGE_SIZE);
+
+        if (filters.status) params.append('status', filters.status);
+        if (filters.page) params.append('page_url', filters.page);
 
         const response = await fetch(`${API_BASE}/images?${params}`);
-        if (!response.ok) throw new Error("Ошибка загрузки галереи");
+        if (!response.ok) throw new Error(`Ошибка загрузки галереи: ${response.status}`);
 
         const data = await response.json();
         allImages = data.items || [];
@@ -64,7 +65,8 @@ async function loadGallery() {
         renderGallery();
         renderPagination(data.total, data.pages);
     } catch (error) {
-        console.error(error);
+        console.error("Gallery error:", error);
+        alert(`Ошибка: ${error.message}`);
     }
 }
 
@@ -88,7 +90,7 @@ function renderGallery() {
 
         card.innerHTML = `
             <div style="position: relative;">
-                <img src="/api/proxy/image?url=${encodeURIComponent(img.image_url)}"
+                <img src="/api/image?url=${encodeURIComponent(img.image_url)}"
                      alt="preview"
                      class="card-image"
                      onerror="this.parentElement.parentElement.classList.add('broken')">

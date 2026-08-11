@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   app:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: image-audit-tool
     ports:
       - "127.0.0.1:8000:8000"

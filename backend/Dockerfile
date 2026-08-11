@@ -3,11 +3,12 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy requirements
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app
-COPY app ./app
+# Copy app and frontend
+COPY backend/app ./app
+COPY frontend ./frontend
 
 # Create data directory for SQLite
 RUN mkdir -p /app/data

@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime
 from ..db import get_db
 from ..models import Image
 
@@ -14,8 +15,12 @@ class ImageResponse(BaseModel):
     image_url: str
     page_url: str
     status: str
-    created_at: str
-    last_seen_at: str
+    created_at: datetime
+    last_seen_at: datetime
+
+    @field_serializer('created_at', 'last_seen_at')
+    def serialize_datetime(self, value: datetime) -> str:
+        return value.isoformat() if value else None
 
     class Config:
         from_attributes = True
@@ -34,6 +39,7 @@ class StatusUpdateRequest(BaseModel):
     status: str
 
 
+@router.get("")
 @router.get("/")
 async def get_images(
     page: int = Query(1, ge=1),
