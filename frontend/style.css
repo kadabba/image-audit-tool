@@ -1,0 +1,237 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f5f5;
+    color: #333;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    margin-bottom: 30px;
+    padding: 20px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+header h1 {
+    font-size: 28px;
+    margin-bottom: 8px;
+}
+
+header p {
+    color: #666;
+}
+
+.controls {
+    margin-bottom: 30px;
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.scan-section,
+.filter-section,
+.action-section {
+    margin-bottom: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.scan-section:last-child,
+.filter-section:last-child,
+.action-section:last-child {
+    margin-bottom: 0;
+}
+
+label {
+    font-weight: 500;
+    min-width: 100px;
+}
+
+input[type="text"],
+select {
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    flex: 1;
+    min-width: 200px;
+}
+
+input[type="text"]:focus,
+select:focus {
+    outline: none;
+    border-color: #0369a1;
+    box-shadow: 0 0 0 3px rgba(3, 105, 161, 0.1);
+}
+
+button {
+    padding: 8px 16px;
+    background: #0369a1;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+button:hover {
+    background: #0256a0;
+}
+
+button:active {
+    background: #024380;
+}
+
+.status {
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.status.loading {
+    background: #e0f2fe;
+    color: #0369a1;
+}
+
+.status.success {
+    background: #dcfce7;
+    color: #16a34a;
+}
+
+.status.error {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 16px;
+    margin-bottom: 30px;
+}
+
+.card {
+    background: white;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s, box-shadow 0.2s;
+    cursor: pointer;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.card.selected {
+    border: 3px solid #0369a1;
+}
+
+.card-image {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    background: #eee;
+}
+
+.card-image.broken {
+    display: none;
+}
+
+.card.broken .card-image::after {
+    content: "⚠ Не загрузилось";
+    display: block;
+    padding: 16px;
+    color: #dc2626;
+    font-weight: bold;
+}
+
+.card-checkbox {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.card-meta {
+    padding: 12px;
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.card-meta .url {
+    margin-bottom: 8px;
+}
+
+.card-meta a {
+    color: #0369a1;
+    text-decoration: none;
+}
+
+.card-meta a:hover {
+    text-decoration: underline;
+}
+
+.card-status {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.card-status.NEW {
+    background: #e0e7ff;
+    color: #4338ca;
+}
+
+.card-status.KEEP {
+    background: #dcfce7;
+    color: #16a34a;
+}
+
+.card-status.DELETE {
+    background: #fee2e2;
+    color: #dc2626;
+}
+
+.pagination {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 30px;
+}
+
+.pagination button {
+    min-width: 40px;
+}
+
+.pagination button.active {
+    background: #0256a0;
+}
+
+.pagination button:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}

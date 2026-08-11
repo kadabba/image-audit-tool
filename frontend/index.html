@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Audit Tool</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Image Audit Tool</h1>
+            <p>Визуальный отбор изображений для удаления</p>
+        </header>
+
+        <div class="controls">
+            <div class="scan-section">
+                <label for="siteUrl">URL сайта:</label>
+                <input type="text" id="siteUrl" placeholder="https://example.com" value="">
+                <button id="scanBtn" onclick="startScan()">Сканировать</button>
+                <div id="scanStatus" class="status"></div>
+            </div>
+
+            <div class="filter-section">
+                <label for="statusFilter">Статус:</label>
+                <select id="statusFilter" onchange="applyFilters()">
+                    <option value="">Все</option>
+                    <option value="NEW">Новые</option>
+                    <option value="KEEP">Оставить</option>
+                    <option value="DELETE">Удалить</option>
+                </select>
+
+                <label for="pageFilter">Страница:</label>
+                <input type="text" id="pageFilter" placeholder="Filter by page" onchange="applyFilters()">
+
+                <button onclick="resetFilters()">Сбросить фильтры</button>
+            </div>
+
+            <div class="action-section">
+                <button onclick="selectAll()">Выбрать все</button>
+                <button onclick="markAsKeep()">✓ Оставить</button>
+                <button onclick="markAsDelete()">✗ Удалить</button>
+                <button onclick="exportList()">Скачать список</button>
+            </div>
+        </div>
+
+        <div id="gallery" class="gallery"></div>
+        <div id="pagination" class="pagination"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

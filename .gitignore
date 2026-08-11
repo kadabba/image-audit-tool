@@ -1,0 +1,15 @@
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+node_modules/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.idea/
+.vscode/
