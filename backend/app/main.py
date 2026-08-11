@@ -3,6 +3,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
 
+from .routes import scan, gallery, export, proxy
+
 app = FastAPI(title="Image Audit Tool", version="0.1.0")
 
 # Подключаем папку frontend как статика
@@ -26,11 +28,11 @@ async def health():
     return {"status": "ok"}
 
 
-# TODO: Подключить роуты когда они будут готовы
-# from app.routes import scan, gallery, export
-# app.include_router(scan.router, prefix="/api/scan", tags=["scan"])
-# app.include_router(gallery.router, prefix="/api/images", tags=["gallery"])
-# app.include_router(export.router, prefix="/api/export", tags=["export"])
+# Подключаем роуты API
+app.include_router(scan.router, prefix="/api/scan", tags=["scan"])
+app.include_router(gallery.router, prefix="/api/images", tags=["gallery"])
+app.include_router(export.router, prefix="/api/export", tags=["export"])
+app.include_router(proxy.router, prefix="/api", tags=["proxy"])
 
 
 if __name__ == "__main__":

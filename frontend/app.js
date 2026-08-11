@@ -88,7 +88,7 @@ function renderGallery() {
 
         card.innerHTML = `
             <div style="position: relative;">
-                <img src="/api/proxy-image?url=${encodeURIComponent(img.image_url)}"
+                <img src="/api/proxy/image?url=${encodeURIComponent(img.image_url)}"
                      alt="preview"
                      class="card-image"
                      onerror="this.parentElement.parentElement.classList.add('broken')">
