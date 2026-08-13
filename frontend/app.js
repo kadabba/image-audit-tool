@@ -3,6 +3,7 @@ let currentPage = 1;
 const PAGE_SIZE = 50;
 let selectedIds = new Set();
 let allImages = [];
+let currentSiteUrl = "";
 let filters = {
     status: "",
     page: ""
@@ -37,7 +38,9 @@ async function startScan() {
         statusDiv.className = "status success";
         statusDiv.textContent = `✓ Найдено ${data.count} изображений`;
 
+        currentSiteUrl = siteUrl;
         currentPage = 1;
+        selectedIds.clear();
         loadGallery();
     } catch (error) {
         statusDiv.className = "status error";
@@ -53,6 +56,7 @@ async function loadGallery() {
         params.append('page', currentPage);
         params.append('limit', PAGE_SIZE);
 
+        if (currentSiteUrl) params.append('site_url', currentSiteUrl);
         if (filters.status) params.append('status', filters.status);
         if (filters.page) params.append('page_url', filters.page);
 

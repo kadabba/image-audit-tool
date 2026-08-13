@@ -46,15 +46,18 @@ async def get_images(
     limit: int = Query(50, ge=1, le=200),
     status: Optional[str] = Query(None),
     page_url: Optional[str] = Query(None),
+    site_url: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
     Получить галерею изображений с фильтрами и пагинацией.
 
-    GET /api/images?page=1&limit=50&status=NEW&page_url=...
+    GET /api/images?page=1&limit=50&status=NEW&page_url=...&site_url=...
     """
     query = db.query(Image)
 
+    if site_url:
+        query = query.filter(Image.site_url == site_url)
     if status:
         query = query.filter(Image.status == status)
     if page_url:

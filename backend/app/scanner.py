@@ -126,9 +126,16 @@ def extract_images(page_url):
 def scan_site(db: Session, site_url: str):
     """
     Сканирует сайт и сохраняет изображения в БД.
-    Возвращает количество новых и обновленных записей.
+    Очищает старые данные для этого сайта перед сканированием.
+    Возвращает количество найденных изображений.
     """
     site_url = site_url.rstrip("/")
+
+    # Очищаем старые данные для этого сайта
+    print(f"Удаляю старые данные для {site_url}...")
+    db.query(Image).filter(Image.site_url == site_url).delete()
+    db.commit()
+
     print(f"Ищу sitemap для {site_url} ...")
     pages = get_sitemap_urls(site_url)
 
@@ -138,40 +145,26 @@ def scan_site(db: Session, site_url: str):
 
     print(f"Найдено страниц: {len(pages)}")
 
-    new_count = 0
-    updated_count = 0
+    count = 0
 
     for i, page in enumerate(pages, 1):
         print(f"[{i}/{len(pages)}] {page}")
         imgs = extract_images(page)
 
         for img_url in imgs:
-            # Ищем существующую запись
-            existing = db.query(Image).filter(
-                Image.site_url == site_url,
-                Image.image_url == img_url,
-                Image.page_url == page
-            ).first()
-
-            if existing:
-                # Upsert: обновляем only last_seen_at, status остаётся
-                existing.last_seen_at = datetime.utcnow()
-                updated_count += 1
-            else:
-                # Новая запись
-                new_img = Image(
-                    site_url=site_url,
-                    image_url=img_url,
-                    page_url=page,
-                    status="NEW",
-                    created_at=datetime.utcnow(),
-                    last_seen_at=datetime.utcnow()
-                )
-                db.add(new_img)
-                new_count += 1
+            new_img = Image(
+                site_url=site_url,
+                image_url=img_url,
+                page_url=page,
+                status="NEW",
+                created_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow()
+            )
+            db.add(new_img)
+            count += 1
 
         time.sleep(0.3)  # не долбим сервер
 
     db.commit()
-    print(f"\nВсего новых: {new_count}, обновлено: {updated_count}")
-    return {"new": new_count, "updated": updated_count, "total": new_count + updated_count}
+    print(f"\nВсего найдено: {count}")
+    return {"count": count}

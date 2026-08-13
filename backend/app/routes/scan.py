@@ -13,8 +13,6 @@ class ScanRequest(BaseModel):
 
 class ScanResponse(BaseModel):
     count: int
-    new: int
-    updated: int
 
 
 @router.post("/")
@@ -27,6 +25,7 @@ async def start_scan(request: ScanRequest, db: Session = Depends(get_db)):
         "site_url": "https://example.com"
     }
 
+    Очищает старые данные для этого сайта и сканирует его заново.
     Возвращает количество найденных изображений.
     """
     if not request.site_url.startswith("http"):
@@ -34,10 +33,6 @@ async def start_scan(request: ScanRequest, db: Session = Depends(get_db)):
 
     try:
         result = scan_site(db, request.site_url)
-        return ScanResponse(
-            count=result["total"],
-            new=result["new"],
-            updated=result["updated"]
-        )
+        return ScanResponse(count=result["count"])
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
