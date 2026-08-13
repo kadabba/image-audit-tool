@@ -10,7 +10,8 @@ let filters = {
 };
 
 async function startScan() {
-    const siteUrl = document.getElementById("siteUrl").value.trim();
+    let siteUrl = document.getElementById("siteUrl").value.trim();
+    siteUrl = siteUrl.replace(/\/$/, "");  // удаляем trailing slash
     if (!siteUrl) {
         alert("Укажи URL сайта");
         return;
