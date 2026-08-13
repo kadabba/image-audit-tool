@@ -54,8 +54,8 @@ async function startScan() {
 async function loadGallery() {
     try {
         const params = new URLSearchParams();
-        params.append('page', currentPage);
-        params.append('limit', PAGE_SIZE);
+        params.append('page', 1);
+        params.append('limit', 10000);  // загружаем все (без пагинации сейчас)
 
         if (currentSiteUrl) params.append('site_url', currentSiteUrl);
         if (filters.status) params.append('status', filters.status);
@@ -65,10 +65,24 @@ async function loadGallery() {
         if (!response.ok) throw new Error(`Ошибка загрузки галереи: ${response.status}`);
 
         const data = await response.json();
-        allImages = data.items || [];
+        const items = data.items || [];
 
+        // Группируем по image_url
+        const groupedImages = {};
+        items.forEach(img => {
+            if (!groupedImages[img.image_url]) {
+                groupedImages[img.image_url] = {
+                    id: img.id,
+                    image_url: img.image_url,
+                    status: img.status,
+                    pages: []
+                };
+            }
+            groupedImages[img.image_url].pages.push(img.page_url);
+        });
+
+        allImages = Object.values(groupedImages);
         renderGallery();
-        renderPagination(data.total, data.pages);
     } catch (error) {
         console.error("Gallery error:", error);
         alert(`Ошибка: ${error.message}`);
@@ -92,6 +106,9 @@ function renderGallery() {
         }
 
         const isSelected = selectedIds.has(img.id);
+        const pagesHtml = img.pages.map(page =>
+            `<a href="${page}" target="_blank" style="display:block; margin:4px 0; font-size:11px; word-break:break-all;">${page}</a>`
+        ).join("");
 
         card.innerHTML = `
             <div style="position: relative;">
@@ -104,16 +121,16 @@ function renderGallery() {
             </div>
             <div class="card-meta">
                 <div class="card-status ${img.status}">${img.status}</div>
-                <div class="url"><a href="${img.image_url}" target="_blank">Открыть</a></div>
-                <div style="margin-top: 8px; color: #666;">
-                    <div><strong>URL:</strong> ${img.image_url.substring(0, 60)}...</div>
-                    <div><strong>Страница:</strong> ${img.page_url.substring(0, 60)}...</div>
+                <div class="url"><a href="${img.image_url}" target="_blank">🔗 Картинка</a></div>
+                <div style="margin-top: 8px; color: #666; border-top:1px solid #eee; padding-top:8px;">
+                    <div><strong>На страницах (${img.pages.length}):</strong></div>
+                    ${pagesHtml}
                 </div>
             </div>
         `;
 
         card.addEventListener("click", (e) => {
-            if (e.target.type !== "checkbox") {
+            if (e.target.type !== "checkbox" && e.target.tagName !== "A") {
                 const checkbox = card.querySelector(".card-checkbox");
                 checkbox.checked = !checkbox.checked;
                 toggleSelect(img.id, checkbox.checked);
