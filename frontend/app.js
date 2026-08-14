@@ -72,13 +72,16 @@ async function loadGallery() {
         items.forEach(img => {
             if (!groupedImages[img.image_url]) {
                 groupedImages[img.image_url] = {
-                    id: img.id,
+                    ids: [],  // ARRAY всех ID для этого image_url
                     image_url: img.image_url,
                     status: img.status,
                     pages: []
                 };
             }
-            groupedImages[img.image_url].pages.push(img.page_url);
+            groupedImages[img.image_url].ids.push(img.id);
+            if (!groupedImages[img.image_url].pages.includes(img.page_url)) {
+                groupedImages[img.image_url].pages.push(img.page_url);
+            }
         });
 
         allImages = Object.values(groupedImages);
@@ -101,11 +104,12 @@ function renderGallery() {
     allImages.forEach(img => {
         const card = document.createElement("div");
         card.className = "card";
-        if (selectedIds.has(img.id)) {
+        const firstId = img.ids[0];  // используем первый ID для галочки
+        if (selectedIds.has(firstId)) {
             card.classList.add("selected");
         }
 
-        const isSelected = selectedIds.has(img.id);
+        const isSelected = selectedIds.has(firstId);
         const pagesHtml = img.pages.map(page =>
             `<a href="${page}" target="_blank" style="display:block; margin:4px 0; font-size:11px; word-break:break-all;">${page}</a>`
         ).join("");
@@ -117,7 +121,7 @@ function renderGallery() {
                      class="card-image"
                      onerror="this.parentElement.parentElement.classList.add('broken')">
                 <input type="checkbox" class="card-checkbox" ${isSelected ? "checked" : ""}
-                       onchange="toggleSelect(${img.id}, this.checked)">
+                       onchange="toggleSelectMultiple(${JSON.stringify(img.ids)}, this.checked)">
             </div>
             <div class="card-meta">
                 <div class="card-status ${img.status}">${img.status}</div>
@@ -194,6 +198,16 @@ function toggleSelect(id, checked) {
     } else {
         selectedIds.delete(id);
     }
+}
+
+function toggleSelectMultiple(ids, checked) {
+    ids.forEach(id => {
+        if (checked) {
+            selectedIds.add(id);
+        } else {
+            selectedIds.delete(id);
+        }
+    });
 }
 
 function selectAll() {
