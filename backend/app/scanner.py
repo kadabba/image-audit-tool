@@ -1,8 +1,9 @@
 """
-Сканер сайтов: собирает все изображения и сохраняет в SQLite.
+Сканер сайтов: собирает все изображения и сохраняет в PostgreSQL с аудитом.
 """
 
 import time
+import asyncio
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
@@ -10,6 +11,8 @@ import xml.etree.ElementTree as ET
 from sqlalchemy.orm import Session
 from .models import Image
 from datetime import datetime
+from .audit_technical import check_image_technical
+from .audit_seo import extract_image_attributes
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ImageAuditBot/1.0)"}
 
@@ -123,11 +126,9 @@ def extract_images(page_url):
     return sorted(images)
 
 
-def scan_site(db: Session, scan_id: int, site_url: str):
+async def scan_site_async(db: Session, scan_id: int, site_url: str):
     """
-    Сканирует сайт и сохраняет изображения в БД.
-    Очищает старые данные для этого сайта перед сканированием.
-    Возвращает количество найденных изображений.
+    Асинхронное сканирование сайта с техническим и SEO аудитом.
     """
     site_url = site_url.rstrip("/")
 
@@ -147,11 +148,25 @@ def scan_site(db: Session, scan_id: int, site_url: str):
         imgs = extract_images(page)
 
         for img_url in imgs:
+            # Проверяем техническое состояние
+            tech_data = await check_image_technical(img_url)
+            print(f"  Техн: {img_url[:60]} -> {tech_data.get('http_status')} ({tech_data.get('format')})")
+
+            # Извлекаем SEO атрибуты
+            seo_data = await extract_image_attributes(page, img_url)
+
             new_img = Image(
                 scan_id=scan_id,
                 image_url=img_url,
                 page_url=page,
                 status="NEW",
+                http_status=tech_data.get("http_status"),
+                file_size=tech_data.get("file_size"),
+                format=tech_data.get("format"),
+                width=tech_data.get("width"),
+                height=tech_data.get("height"),
+                alt_text=seo_data.get("alt_text"),
+                title_text=seo_data.get("title_text"),
                 created_at=datetime.utcnow(),
                 last_seen_at=datetime.utcnow()
             )

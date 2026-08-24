@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from ..db import get_db
-from ..scanner import scan_site
+from ..db import get_db, SessionLocal
+from ..scanner import scan_site_async
 from ..models import User, Project, Scan, ScanStatus
+import asyncio
 
 router = APIRouter()
 
@@ -15,10 +16,31 @@ class ScanRequest(BaseModel):
 class ScanResponse(BaseModel):
     count: int
     scan_id: int
+    status: str
+
+
+async def _run_scan_background(scan_id: int, site_url: str):
+    """Фоновое сканирование в отдельной сессии БД"""
+    db = SessionLocal()
+    try:
+        result = await scan_site_async(db, scan_id, site_url)
+        scan = db.query(Scan).filter(Scan.id == scan_id).first()
+        if scan:
+            scan.status = ScanStatus.completed
+            scan.total_images = result["count"]
+            db.commit()
+    except Exception as e:
+        scan = db.query(Scan).filter(Scan.id == scan_id).first()
+        if scan:
+            scan.status = ScanStatus.failed
+            db.commit()
+        print(f"Ошибка при сканировании: {e}")
+    finally:
+        db.close()
 
 
 @router.post("/")
-async def start_scan(request: ScanRequest, db: Session = Depends(get_db)):
+async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Запустить сканирование сайта.
 
@@ -58,14 +80,9 @@ async def start_scan(request: ScanRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(scan)
 
-        # Запускаем сканирование
-        result = scan_site(db, scan.id, request.site_url)
+        # Запускаем сканирование в фоне
+        background_tasks.add_task(_run_scan_background, scan.id, request.site_url)
 
-        # Обновляем статус сканирования
-        scan.status = ScanStatus.completed
-        scan.total_images = result["count"]
-        db.commit()
-
-        return ScanResponse(count=result["count"], scan_id=scan.id)
+        return ScanResponse(count=0, scan_id=scan.id, status="running")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
