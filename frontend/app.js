@@ -11,6 +11,15 @@ let filters = {
     page: ""
 };
 
+// Загружаем последний скан при загрузке страницы
+window.addEventListener('load', async () => {
+    const lastScanId = localStorage.getItem('lastScanId');
+    if (lastScanId) {
+        currentScanId = parseInt(lastScanId);
+        loadGallery();
+    }
+});
+
 async function pollScanStatus(scanId) {
     try {
         const response = await fetch(`${API_BASE}/scans/${scanId}`, {
@@ -70,6 +79,7 @@ async function startScan() {
 
         const data = await response.json();
         currentScanId = data.scan_id;
+        localStorage.setItem('lastScanId', currentScanId);
         currentSiteUrl = siteUrl;
         currentPage = 1;
         selectedIds.clear();
