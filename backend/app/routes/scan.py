@@ -19,6 +19,12 @@ class ScanResponse(BaseModel):
     status: str
 
 
+class ScanStatusResponse(BaseModel):
+    id: int
+    status: str
+    total_images: int
+
+
 async def _run_scan_background(scan_id: int, site_url: str):
     """Фоновое сканирование в отдельной сессии БД"""
     db = SessionLocal()
@@ -86,3 +92,21 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks, db
         return ScanResponse(count=0, scan_id=scan.id, status="running")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{scan_id}")
+async def get_scan_status(scan_id: int, db: Session = Depends(get_db)):
+    """
+    Получить статус сканирования.
+
+    GET /api/scans/123
+    """
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Сканирование не найдено")
+
+    return ScanStatusResponse(
+        id=scan.id,
+        status=scan.status.value,
+        total_images=scan.total_images or 0
+    )

@@ -4,10 +4,41 @@ const PAGE_SIZE = 50;
 let selectedIds = new Set();
 let allImages = [];
 let currentSiteUrl = "";
+let currentScanId = null;
+let scanPollTimeout = null;
 let filters = {
     status: "",
     page: ""
 };
+
+async function pollScanStatus(scanId) {
+    try {
+        const response = await fetch(`${API_BASE}/scans/${scanId}`, {
+            method: "GET"
+        });
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+        const statusDiv = document.getElementById("scanStatus");
+
+        if (data.status === "running") {
+            statusDiv.textContent = `⏳ Сканирование... (обрабатывается)`;
+            scanPollTimeout = setTimeout(() => pollScanStatus(scanId), 2000);
+        } else if (data.status === "completed") {
+            statusDiv.className = "status success";
+            statusDiv.textContent = `✓ Найдено ${data.total_images} изображений`;
+            document.getElementById("scanBtn").disabled = false;
+            loadGallery();
+        } else {
+            statusDiv.className = "status error";
+            statusDiv.textContent = `✗ Ошибка при сканировании`;
+            document.getElementById("scanBtn").disabled = false;
+        }
+    } catch (error) {
+        console.error("Poll error:", error);
+    }
+}
 
 async function startScan() {
     let siteUrl = document.getElementById("siteUrl").value.trim();
@@ -24,6 +55,8 @@ async function startScan() {
     statusDiv.className = "status loading";
     statusDiv.textContent = "Сканирование...";
 
+    if (scanPollTimeout) clearTimeout(scanPollTimeout);
+
     try {
         const response = await fetch(`${API_BASE}/scan`, {
             method: "POST",
@@ -36,17 +69,25 @@ async function startScan() {
         }
 
         const data = await response.json();
-        statusDiv.className = "status success";
-        statusDiv.textContent = `✓ Найдено ${data.count} изображений`;
-
+        currentScanId = data.scan_id;
         currentSiteUrl = siteUrl;
         currentPage = 1;
         selectedIds.clear();
-        loadGallery();
+
+        // Если сканирование уже завершено (маловероятно), показываем результат
+        if (data.status === "completed") {
+            statusDiv.className = "status success";
+            statusDiv.textContent = `✓ Найдено ${data.count} изображений`;
+            btn.disabled = false;
+            loadGallery();
+        } else {
+            // Иначе начинаем polling
+            statusDiv.textContent = `⏳ Сканирование... (обрабатывается)`;
+            pollScanStatus(data.scan_id);
+        }
     } catch (error) {
         statusDiv.className = "status error";
         statusDiv.textContent = `✗ ${error.message}`;
-    } finally {
         btn.disabled = false;
     }
 }
@@ -57,7 +98,7 @@ async function loadGallery() {
         params.append('page', 1);
         params.append('limit', 10000);  // загружаем все (без пагинации сейчас)
 
-        if (currentSiteUrl) params.append('site_url', currentSiteUrl);
+        if (currentScanId) params.append('scan_id', currentScanId);
         if (filters.status) params.append('status', filters.status);
         if (filters.page) params.append('page_url', filters.page);
 
