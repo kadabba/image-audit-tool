@@ -238,7 +238,7 @@ async function updateStatus(ids, status) {
         const response = await fetch(`${API_BASE}/images/status`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids, status })
+            body: JSON.stringify({ ids: Array.from(ids), status })
         });
 
         if (!response.ok) throw new Error("Ошибка обновления");

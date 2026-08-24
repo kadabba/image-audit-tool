@@ -1,30 +1,25 @@
 import os
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from .models import Base
 
-# Папка для БД
-DB_DIR = os.path.join(os.path.dirname(__file__), "../../data")
-os.makedirs(DB_DIR, exist_ok=True)
+# PostgreSQL подключение (используем переменные окружения для безопасности)
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_HOST = os.getenv("DB_HOST", "db")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "image_audit")
 
-DB_PATH = os.path.join(DB_DIR, "audit.db")
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
-# Создаём engine с check_same_thread=False для многопоточности
+# Создаём engine для PostgreSQL
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    pool_size=10,
+    max_overflow=20,
     pool_pre_ping=True,
+    echo=False,
 )
-
-
-# Включаем WAL-режим для параллельных read/write
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_conn, connection_record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.close()
-
 
 # Создаём таблицы
 Base.metadata.create_all(bind=engine)

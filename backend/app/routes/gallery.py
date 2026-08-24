@@ -43,7 +43,7 @@ class StatusUpdateRequest(BaseModel):
 @router.get("/")
 async def get_images(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=10000),
     status: Optional[str] = Query(None),
     page_url: Optional[str] = Query(None),
     site_url: Optional[str] = Query(None),
