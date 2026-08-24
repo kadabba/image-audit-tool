@@ -175,6 +175,7 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
 
         time.sleep(0.3)  # не долбим сервер
 
+    print(f"\nКоммитим {count} изображений...")
     db.commit()
-    print(f"\nВсего найдено: {count}")
+    print(f"Всего найдено и сохранено: {count}")
     return {"count": count}
