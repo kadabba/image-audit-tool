@@ -146,6 +146,7 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
     for i, page in enumerate(pages, 1):
         print(f"[{i}/{len(pages)}] {page}")
         imgs = extract_images(page)
+        print(f"  Найдено изображений: {len(imgs)}")
 
         for img_url in imgs:
             # Проверяем техническое состояние
