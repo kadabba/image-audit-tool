@@ -123,18 +123,13 @@ def extract_images(page_url):
     return sorted(images)
 
 
-def scan_site(db: Session, site_url: str):
+def scan_site(db: Session, scan_id: int, site_url: str):
     """
     Сканирует сайт и сохраняет изображения в БД.
     Очищает старые данные для этого сайта перед сканированием.
     Возвращает количество найденных изображений.
     """
     site_url = site_url.rstrip("/")
-
-    # Очищаем старые данные для этого сайта
-    print(f"Удаляю старые данные для {site_url}...")
-    db.query(Image).filter(Image.site_url == site_url).delete()
-    db.commit()
 
     print(f"Ищу sitemap для {site_url} ...")
     pages = get_sitemap_urls(site_url)
@@ -153,7 +148,7 @@ def scan_site(db: Session, site_url: str):
 
         for img_url in imgs:
             new_img = Image(
-                site_url=site_url,
+                scan_id=scan_id,
                 image_url=img_url,
                 page_url=page,
                 status="NEW",

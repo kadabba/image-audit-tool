@@ -11,10 +11,14 @@ router = APIRouter()
 
 class ImageResponse(BaseModel):
     id: int
-    site_url: str
+    scan_id: int
     image_url: str
     page_url: str
     status: str
+    http_status: Optional[int] = None
+    file_size: Optional[int] = None
+    format: Optional[str] = None
+    alt_text: Optional[str] = None
     created_at: datetime
     last_seen_at: datetime
 
@@ -46,18 +50,26 @@ async def get_images(
     limit: int = Query(50, ge=1, le=10000),
     status: Optional[str] = Query(None),
     page_url: Optional[str] = Query(None),
-    site_url: Optional[str] = Query(None),
+    scan_id: Optional[int] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
     Получить галерею изображений с фильтрами и пагинацией.
 
-    GET /api/images?page=1&limit=50&status=NEW&page_url=...&site_url=...
+    GET /api/images?page=1&limit=50&status=NEW&page_url=...&scan_id=...
     """
     query = db.query(Image)
 
-    if site_url:
-        query = query.filter(Image.site_url == site_url)
+    # Если не указан scan_id, используем последний скан
+    if not scan_id:
+        from ..models import Scan
+        last_scan = db.query(Scan).order_by(Scan.id.desc()).first()
+        if last_scan:
+            scan_id = last_scan.id
+
+    if scan_id:
+        query = query.filter(Image.scan_id == scan_id)
+
     if status:
         query = query.filter(Image.status == status)
     if page_url:
