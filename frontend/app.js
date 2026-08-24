@@ -13,10 +13,31 @@ let filters = {
 
 // Загружаем последний скан при загрузке страницы
 window.addEventListener('load', async () => {
-    const lastScanId = localStorage.getItem('lastScanId');
+    let lastScanId = localStorage.getItem('lastScanId');
+    console.log('Page loaded, lastScanId from storage:', lastScanId);
+
+    if (!lastScanId) {
+        // Fallback: загружаем последний скан из БД через API
+        try {
+            const response = await fetch(`${API_BASE}/images?limit=1`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.items && data.items.length > 0) {
+                    lastScanId = data.items[0].scan_id;
+                    console.log('Loaded lastScanId from API:', lastScanId);
+                }
+            }
+        } catch (e) {
+            console.log('Failed to load from API:', e);
+        }
+    }
+
     if (lastScanId) {
         currentScanId = parseInt(lastScanId);
+        console.log('Loading gallery for scan:', currentScanId);
         loadGallery();
+    } else {
+        console.log('No scan found');
     }
 });
 
