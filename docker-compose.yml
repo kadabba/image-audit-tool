@@ -1,13 +1,11 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15-alpine
     container_name: image-audit-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: image_audit
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?укажите DB_PASSWORD в .env — см. .env.example}
+      POSTGRES_DB: ${DB_NAME:-image_audit}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -28,11 +26,11 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASSWORD=${DB_PASSWORD:?укажите DB_PASSWORD в .env — см. .env.example}
       - DB_HOST=db
       - DB_PORT=5432
-      - DB_NAME=image_audit
+      - DB_NAME=${DB_NAME:-image_audit}
     depends_on:
       db:
         condition: service_healthy

@@ -13,3 +13,8 @@ dist/
 build/
 .idea/
 .vscode/
+
+# Рабочие выгрузки со сканов — не место в репозитории
+delete-images.txt
+urls.txt
+*_report.html
