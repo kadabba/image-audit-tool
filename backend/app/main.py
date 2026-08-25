@@ -5,7 +5,17 @@ import os
 
 from .routes import scan, gallery, export, proxy
 
-app = FastAPI(title="Image Audit Tool", version="0.1.0")
+# Swagger открыт по умолчанию для удобства локальной разработки.
+# На публичном домене выключается через ENABLE_DOCS=false.
+ENABLE_DOCS = os.getenv("ENABLE_DOCS", "true").lower() not in ("false", "0", "no")
+
+app = FastAPI(
+    title="Image Audit Tool",
+    version="0.1.0",
+    docs_url="/docs" if ENABLE_DOCS else None,
+    redoc_url="/redoc" if ENABLE_DOCS else None,
+    openapi_url="/openapi.json" if ENABLE_DOCS else None,
+)
 
 # Найди папку frontend (возможные пути)
 possible_paths = [

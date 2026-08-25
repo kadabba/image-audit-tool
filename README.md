@@ -45,6 +45,7 @@ docker compose up -d
 | `DB_PASSWORD` | —             | **Обязательна.** Без неё `docker compose` не стартует |
 | `DB_USER`     | `postgres`    | Пользователь БД |
 | `DB_NAME`     | `image_audit` | Имя базы |
+| `ENABLE_DOCS` | `true`        | Swagger по пути `/docs`. `false` закрывает его вместе с `/redoc` и `/openapi.json` |
 
 Лимиты правятся константами в [`backend/app/ratelimit.py`](backend/app/ratelimit.py):
 
@@ -79,7 +80,11 @@ wp eval-file remove-images.php delete-images.txt apply
 | `GET`  | `/api/images?scan_id=N` | Галерея скана (без `scan_id` вернёт пусто) |
 | `GET`  | `/api/image?url=...`    | Прокси картинки в обход CORS и хотлинк-защиты |
 
-Интерактивная документация: <http://localhost:8000/docs>
+Пути указаны относительно адреса, на котором развёрнут сервис: при локальном
+запуске это `http://localhost:8000`, в продакшене — ваш домен.
+
+Интерактивная документация Swagger — по пути `/docs`. В продакшене её можно
+закрыть, задав `ENABLE_DOCS=false` (см. таблицу переменных выше).
 
 ## Развёртывание
 

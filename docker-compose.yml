@@ -31,6 +31,7 @@ services:
       - DB_HOST=db
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-image_audit}
+      - ENABLE_DOCS=${ENABLE_DOCS:-true}
     depends_on:
       db:
         condition: service_healthy
