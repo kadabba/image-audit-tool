@@ -144,22 +144,38 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
 
     count = 0
 
+    async def audit_image(img_url: str):
+        """Аудит одного изображения - техника + SEO + авторские права"""
+        tech_data = await check_image_technical(img_url)
+        seo_data = await extract_image_attributes(page, img_url)
+        copyright_data = await analyze_copyright_risk(img_url)
+        return {
+            'img_url': img_url,
+            'tech_data': tech_data,
+            'seo_data': seo_data,
+            'copyright_data': copyright_data
+        }
+
     for i, page in enumerate(pages, 1):
         print(f"[{i}/{len(pages)}] {page}")
         imgs = extract_images(page)
         print(f"  Найдено изображений: {len(imgs)}")
 
-        for img_url in imgs:
-            # Проверяем техническое состояние
-            tech_data = await check_image_technical(img_url)
-            print(f"  Техн: {img_url[:60]} -> {tech_data.get('http_status')} ({tech_data.get('format')})")
+        # Параллельно обрабатываем все изображения на странице (макс 5 одновременно)
+        tasks = [audit_image(img_url) for img_url in imgs]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Извлекаем SEO атрибуты
-            seo_data = await extract_image_attributes(page, img_url)
+        for result in results:
+            if isinstance(result, Exception):
+                print(f"  ✗ Ошибка при аудите: {result}")
+                continue
 
-            # Анализируем авторские права
-            copyright_data = await analyze_copyright_risk(img_url)
-            print(f"  © Риск: {copyright_data.get('copyright_score')}")
+            img_url = result['img_url']
+            tech_data = result['tech_data']
+            seo_data = result['seo_data']
+            copyright_data = result['copyright_data']
+
+            print(f"  Техн: {img_url[:50]} → {tech_data.get('http_status')} | © {copyright_data.get('copyright_score')}")
 
             new_img = Image(
                 scan_id=scan_id,
@@ -181,8 +197,6 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
             )
             db.add(new_img)
             count += 1
-
-        time.sleep(0.3)  # не долбим сервер
 
     print(f"\nКоммитим {count} изображений...")
     db.commit()
