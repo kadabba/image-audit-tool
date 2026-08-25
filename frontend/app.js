@@ -45,7 +45,7 @@ let scanStartTime = null;
 
 async function pollScanStatus(scanId) {
     try {
-        const response = await fetch(`${API_BASE}/scans/${scanId}`, {
+        const response = await fetch(`${API_BASE}/scan/${scanId}`, {
             method: "GET"
         });
 
