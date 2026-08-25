@@ -41,6 +41,8 @@ window.addEventListener('load', async () => {
     }
 });
 
+let scanStartTime = null;
+
 async function pollScanStatus(scanId) {
     try {
         const response = await fetch(`${API_BASE}/scans/${scanId}`, {
@@ -53,14 +55,43 @@ async function pollScanStatus(scanId) {
         const statusDiv = document.getElementById("scanStatus");
 
         if (data.status === "running") {
-            statusDiv.textContent = `⏳ Сканирование... (обрабатывается)`;
+            // Рассчитываем оценку времени
+            if (!scanStartTime) scanStartTime = Date.now();
+            const elapsed = (Date.now() - scanStartTime) / 1000; // секунды
+            let timeRemaining = "...";
+
+            if (data.progress > 5 && elapsed > 10) {
+                const rate = elapsed / data.progress; // сек на процент
+                const remainingPercent = 100 - data.progress;
+                const remainingSecs = Math.round(rate * remainingPercent);
+                const mins = Math.ceil(remainingSecs / 60);
+                timeRemaining = mins > 0 ? `~${mins} мин` : `<1 мин`;
+            }
+
+            const progressBar = `
+                <div style="margin-top: 8px;">
+                    <div style="width:100%; height:20px; background:#e9ecef; border-radius:3px; overflow:hidden;">
+                        <div style="width:${data.progress}%; height:100%; background:#007bff; transition:width 0.3s; display:flex; align-items:center; justify-content:center;">
+                            <span style="color:white; font-size:11px; font-weight:bold;">${data.progress}%</span>
+                        </div>
+                    </div>
+                    <div style="font-size:12px; margin-top:4px; color:#666;">
+                        ${data.scanned_pages}/${data.total_pages} страниц | ${timeRemaining}
+                    </div>
+                </div>
+            `;
+
+            statusDiv.className = "status loading";
+            statusDiv.innerHTML = `⏳ Сканирование...${progressBar}`;
             scanPollTimeout = setTimeout(() => pollScanStatus(scanId), 2000);
         } else if (data.status === "completed") {
+            scanStartTime = null;
             statusDiv.className = "status success";
             statusDiv.textContent = `✓ Найдено ${data.total_images} изображений`;
             document.getElementById("scanBtn").disabled = false;
             loadGallery();
         } else {
+            scanStartTime = null;
             statusDiv.className = "status error";
             statusDiv.textContent = `✗ Ошибка при сканировании`;
             document.getElementById("scanBtn").disabled = false;

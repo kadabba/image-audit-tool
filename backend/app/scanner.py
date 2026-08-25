@@ -142,6 +142,13 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
 
     print(f"Найдено страниц: {len(pages)}")
 
+    # Обновляем scan с количеством страниц и временем начала
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if scan:
+        scan.total_pages = len(pages)
+        scan.started_at = datetime.utcnow()
+        db.commit()
+
     count = 0
 
     async def audit_image(img_url: str):
@@ -161,7 +168,7 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
         imgs = extract_images(page)
         print(f"  Найдено изображений: {len(imgs)}")
 
-        # Параллельно обрабатываем все изображения на странице (макс 5 одновременно)
+        # Параллельно обрабатываем все изображения на странице
         tasks = [audit_image(img_url) for img_url in imgs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -197,6 +204,12 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
             )
             db.add(new_img)
             count += 1
+
+        # Обновляем прогресс сканирования после каждой страницы
+        scan = db.query(Scan).filter(Scan.id == scan_id).first()
+        if scan:
+            scan.scanned_pages = i
+            db.commit()
 
     print(f"\nКоммитим {count} изображений...")
     db.commit()

@@ -44,8 +44,10 @@ class Scan(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     status = Column(Enum(ScanStatus), default=ScanStatus.pending, nullable=False)
     total_pages = Column(Integer, default=0)
+    scanned_pages = Column(Integer, default=0)  # текущий прогресс
     total_images = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at = Column(DateTime, nullable=True)  # когда началось сканирование
     completed_at = Column(DateTime, nullable=True)
 
     project = relationship("Project", back_populates="scans")
