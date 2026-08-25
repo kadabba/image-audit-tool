@@ -144,10 +144,15 @@ async function loadGallery() {
         items.forEach(img => {
             if (!groupedImages[img.image_url]) {
                 groupedImages[img.image_url] = {
-                    ids: [],  // ARRAY всех ID для этого image_url
+                    ids: [],
                     image_url: img.image_url,
                     status: img.status,
-                    pages: []
+                    pages: [],
+                    // Аудит данные
+                    http_status: img.http_status,
+                    file_size: img.file_size,
+                    format: img.format,
+                    alt_text: img.alt_text
                 };
             }
             groupedImages[img.image_url].ids.push(img.id);
@@ -186,6 +191,23 @@ function renderGallery() {
             `<a href="${page}" target="_blank" style="display:block; margin:4px 0; font-size:11px; word-break:break-all;">${page}</a>`
         ).join("");
 
+        // Форматируем размер файла
+        const fileSizeText = img.file_size ?
+            (img.file_size > 1024*1024 ? (img.file_size/(1024*1024)).toFixed(1) + ' MB' :
+             img.file_size > 1024 ? (img.file_size/1024).toFixed(1) + ' KB' :
+             img.file_size + ' B') : '—';
+
+        // Аудит информация
+        const auditHtml = `
+            <div style="margin-top: 8px; background:#f5f5f5; padding:6px; border-radius:3px; font-size:12px;">
+                <div><strong>🔍 Аудит:</strong></div>
+                <div>HTTP: <span style="color:${img.http_status === 200 ? '#28a745' : '#dc3545'}">${img.http_status || '—'}</span></div>
+                <div>Формат: ${img.format || '—'}</div>
+                <div>Размер: ${fileSizeText}</div>
+                ${img.alt_text ? `<div>Alt: <em>"${img.alt_text}"</em></div>` : ''}
+            </div>
+        `;
+
         card.innerHTML = `
             <div style="position: relative;">
                 <img src="/api/image?url=${encodeURIComponent(img.image_url)}"
@@ -198,6 +220,7 @@ function renderGallery() {
             <div class="card-meta">
                 <div class="card-status ${img.status}">${img.status}</div>
                 <div class="url"><a href="${img.image_url}" target="_blank">🔗 Картинка</a></div>
+                ${auditHtml}
                 <div style="margin-top: 8px; color: #666; border-top:1px solid #eee; padding-top:8px;">
                     <div><strong>На страницах (${img.pages.length}):</strong></div>
                     ${pagesHtml}
