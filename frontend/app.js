@@ -13,24 +13,8 @@ let filters = {
 
 // Загружаем последний скан при загрузке страницы
 window.addEventListener('load', async () => {
-    let lastScanId = localStorage.getItem('lastScanId');
-    console.log('Page loaded, lastScanId from storage:', lastScanId);
-
-    if (!lastScanId) {
-        // Fallback: загружаем последний скан из БД через API
-        try {
-            const response = await fetch(`${API_BASE}/images?limit=1`);
-            if (response.ok) {
-                const data = await response.json();
-                if (data.items && data.items.length > 0) {
-                    lastScanId = data.items[0].scan_id;
-                    console.log('Loaded lastScanId from API:', lastScanId);
-                }
-            }
-        } catch (e) {
-            console.log('Failed to load from API:', e);
-        }
-    }
+    // Только свой скан из localStorage — чужие сканы не подтягиваем
+    const lastScanId = localStorage.getItem('lastScanId');
 
     if (lastScanId) {
         currentScanId = parseInt(lastScanId);
@@ -126,7 +110,8 @@ async function startScan() {
         });
 
         if (!response.ok) {
-            throw new Error(`Ошибка: ${response.status}`);
+            const detail = await response.json().then(d => d.detail).catch(() => null);
+            throw new Error(detail || `Ошибка: ${response.status}`);
         }
 
         const data = await response.json();
@@ -279,18 +264,19 @@ function renderGallery() {
                 <div class="card-status ${img.status}">${img.status}</div>
                 <div class="url"><a href="${img.image_url}" target="_blank">🔗 Картинка</a></div>
                 ${auditHtml}
-                <div style="margin-top: 8px; color: #666; border-top:1px solid #eee; padding-top:8px;">
-                    <div><strong>На страницах (${img.pages.length}):</strong></div>
+                <details style="margin-top: 8px; color: #666; border-top:1px solid #eee; padding-top:8px;">
+                    <summary style="cursor:pointer;"><strong>На страницах (${img.pages.length})</strong></summary>
                     ${pagesHtml}
-                </div>
+                </details>
             </div>
         `;
 
         card.addEventListener("click", (e) => {
-            if (e.target.type !== "checkbox" && e.target.tagName !== "A") {
+            if (e.target.type !== "checkbox" && e.target.tagName !== "A" && !e.target.closest("details")) {
                 const checkbox = card.querySelector(".card-checkbox");
                 checkbox.checked = !checkbox.checked;
-                toggleSelect(img.id, checkbox.checked);
+                toggleSelectMultiple(img.ids, checkbox.checked);
+                card.classList.toggle("selected", checkbox.checked);
             }
         });
 
@@ -365,7 +351,7 @@ function toggleSelectMultiple(ids, checked) {
 
 function selectAll() {
     allImages.forEach(img => {
-        selectedIds.add(img.id);
+        img.ids.forEach(id => selectedIds.add(id));
     });
     renderGallery();
 }
@@ -403,24 +389,26 @@ async function updateStatus(ids, status) {
     }
 }
 
-async function exportList() {
-    try {
-        const scanParam = currentScanId ? `&scan_id=${currentScanId}` : "";
-        const response = await fetch(`${API_BASE}/export?status=DELETE${scanParam}`);
-        if (!response.ok) throw new Error("Ошибка экспорта");
+function exportList() {
+    // Отмеченные картинки живут только в браузере — собираем файл здесь же
+    const urls = allImages
+        .filter(img => img.ids.some(id => selectedIds.has(id)))
+        .map(img => img.image_url);
 
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "delete-images.txt";
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-    } catch (error) {
-        alert(`Ошибка: ${error.message}`);
+    if (urls.length === 0) {
+        alert("Отметь хотя бы одну картинку");
+        return;
     }
+
+    const blob = new Blob([urls.join("\n") + "\n"], { type: "text/plain" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "delete-images.txt";
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
 }
 
 function applyFilters() {

@@ -17,4 +17,8 @@ RUN mkdir -p /app/data
 EXPOSE 8000
 
 # Run uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers: брать реальный IP клиента из X-Forwarded-For.
+# Доверяем всем источникам, т.к. порт в compose открыт только на 127.0.0.1 —
+# дотянуться может лишь локальный реверс-прокси.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", \
+     "--proxy-headers", "--forwarded-allow-ips", "*"]

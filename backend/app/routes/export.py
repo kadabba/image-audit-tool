@@ -27,16 +27,16 @@ async def export_urls(
         if last_scan:
             scan_id = last_scan.id
 
-    query = db.query(Image).filter(Image.status == status)
+    query = db.query(Image.image_url).distinct().filter(Image.status == status)
     if scan_id:
         query = query.filter(Image.scan_id == scan_id)
 
-    images = query.all()
+    urls = query.all()
 
     # Генерируем текстовый контент
     output = StringIO()
-    for img in images:
-        output.write(img.image_url + "\n")
+    for (url,) in urls:
+        output.write(url + "\n")
 
     output.seek(0)
 

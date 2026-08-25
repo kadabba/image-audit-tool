@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from ..db import get_db, SessionLocal
 from ..scanner import scan_site_async
 from ..models import User, Project, Scan, ScanStatus
+from ..net_guard import check_public_url
+from .. import ratelimit
 import asyncio
 
 router = APIRouter()
@@ -28,17 +30,19 @@ class ScanStatusResponse(BaseModel):
     progress: int  # 0-100%
 
 
-async def _run_scan_background(scan_id: int, site_url: str):
+async def _run_scan_background(scan_id: int, site_url: str, enable_seo: bool = False):
     """Фоновое сканирование в отдельной сессии БД"""
     db = SessionLocal()
     try:
-        result = await scan_site_async(db, scan_id, site_url)
+        result = await scan_site_async(db, scan_id, site_url, enable_seo=enable_seo)
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan:
             scan.status = ScanStatus.completed
             scan.total_images = result["count"]
             db.commit()
     except Exception as e:
+        # откат обязателен: после упавшего flush сессия не примет запись статуса
+        db.rollback()
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan:
             scan.status = ScanStatus.failed
@@ -46,10 +50,16 @@ async def _run_scan_background(scan_id: int, site_url: str):
         print(f"Ошибка при сканировании: {e}")
     finally:
         db.close()
+        ratelimit.release()
 
 
 @router.post("/")
-async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def start_scan(
+    request: ScanRequest,
+    http_request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """
     Запустить сканирование сайта.
 
@@ -61,8 +71,16 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks, db
     Очищает старые данные для этого сайта и сканирует его заново.
     Возвращает количество найденных изображений и scan_id.
     """
-    if not request.site_url.startswith("http"):
-        raise HTTPException(status_code=400, detail="URL должен начинаться с http(s)://")
+    try:
+        check_public_url(request.site_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    try:
+        ratelimit.check_and_reserve(client_ip)
+    except ratelimit.RateLimited as e:
+        raise HTTPException(status_code=429, detail=str(e))
 
     try:
         # Для MVP: используем или создаём default user и project
@@ -94,6 +112,8 @@ async def start_scan(request: ScanRequest, background_tasks: BackgroundTasks, db
 
         return ScanResponse(count=0, scan_id=scan.id, status="running")
     except Exception as e:
+        # фоновая задача не стартует — слот освобождаем здесь, иначе он утечёт
+        ratelimit.release()
         raise HTTPException(status_code=400, detail=str(e))
 
 

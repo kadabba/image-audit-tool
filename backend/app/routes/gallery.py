@@ -58,17 +58,11 @@ async def get_images(
 
     GET /api/images?page=1&limit=50&status=NEW&page_url=...&scan_id=...
     """
-    query = db.query(Image)
-
-    # Если не указан scan_id, используем последний скан
+    # Без scan_id не отдаём ничего: иначе посетитель увидит чужой скан
     if not scan_id:
-        from ..models import Scan
-        last_scan = db.query(Scan).order_by(Scan.id.desc()).first()
-        if last_scan:
-            scan_id = last_scan.id
+        return GalleryResponse(items=[], total=0, page=page, limit=limit, pages=0)
 
-    if scan_id:
-        query = query.filter(Image.scan_id == scan_id)
+    query = db.query(Image).filter(Image.scan_id == scan_id)
 
     if status:
         query = query.filter(Image.status == status)

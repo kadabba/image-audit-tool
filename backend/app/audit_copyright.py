@@ -44,12 +44,17 @@ async def analyze_copyright_risk(image_url: str, image_data: bytes = None) -> di
             if exif_raw:
                 for tag_id, value in exif_raw.items():
                     tag_name = TAGS.get(tag_id, tag_id)
-                    # Сохраняем только текстовые поля до 500 символов
-                    if isinstance(value, (str, bytes)):
-                        try:
-                            exif_data[tag_name] = value[:500] if isinstance(value, (str, bytes)) else str(value)[:500]
-                        except:
-                            pass
+                    # Конвертируем все значения в JSON-safe формат
+                    try:
+                        if isinstance(value, bytes):
+                            value = value.decode('utf-8', errors='ignore')[:500]
+                        elif isinstance(value, str):
+                            value = value[:500]
+                        else:
+                            value = str(value)[:500]
+                        exif_data[tag_name] = value
+                    except:
+                        pass
         except Exception as e:
             print(f"EXIF parse error for {image_url}: {e}")
 
