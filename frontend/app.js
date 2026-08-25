@@ -152,7 +152,9 @@ async function loadGallery() {
                     http_status: img.http_status,
                     file_size: img.file_size,
                     format: img.format,
-                    alt_text: img.alt_text
+                    alt_text: img.alt_text,
+                    copyright_score: img.copyright_score,
+                    risk_details: img.risk_details
                 };
             }
             groupedImages[img.image_url].ids.push(img.id);
@@ -197,10 +199,35 @@ function renderGallery() {
              img.file_size > 1024 ? (img.file_size/1024).toFixed(1) + ' KB' :
              img.file_size + ' B') : '—';
 
+        // Риск авторского права
+        const riskColor = {
+            'low': '#28a745',    // зелёный
+            'medium': '#ffc107',  // жёлтый
+            'high': '#dc3545'     // красный
+        };
+        const riskIcon = {
+            'low': '✅',
+            'medium': '⚠️',
+            'high': '🚫'
+        };
+        const riskText = {
+            'low': 'Низкий риск',
+            'medium': 'Средний риск',
+            'high': 'Высокий риск'
+        };
+
+        const riskScore = img.copyright_score || 'low';
+        const riskTooltip = img.risk_details ? img.risk_details.reason || '' : '';
+
         // Аудит информация
         const auditHtml = `
             <div style="margin-top: 8px; background:#f5f5f5; padding:6px; border-radius:3px; font-size:12px;">
-                <div><strong>🔍 Аудит:</strong></div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div><strong>🔍 Аудит:</strong></div>
+                    <div style="color:${riskColor[riskScore]}; font-weight:bold; cursor:help;" title="${riskTooltip}">
+                        ${riskIcon[riskScore]} ${riskText[riskScore]}
+                    </div>
+                </div>
                 <div>HTTP: <span style="color:${img.http_status === 200 ? '#28a745' : '#dc3545'}">${img.http_status || '—'}</span></div>
                 <div>Формат: ${img.format || '—'}</div>
                 <div>Размер: ${fileSizeText}</div>

@@ -13,6 +13,7 @@ from .models import Image
 from datetime import datetime
 from .audit_technical import check_image_technical
 from .audit_seo import extract_image_attributes
+from .audit_copyright import analyze_copyright_risk
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ImageAuditBot/1.0)"}
 
@@ -156,6 +157,10 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
             # Извлекаем SEO атрибуты
             seo_data = await extract_image_attributes(page, img_url)
 
+            # Анализируем авторские права
+            copyright_data = await analyze_copyright_risk(img_url)
+            print(f"  © Риск: {copyright_data.get('copyright_score')}")
+
             new_img = Image(
                 scan_id=scan_id,
                 image_url=img_url,
@@ -168,6 +173,9 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
                 height=tech_data.get("height"),
                 alt_text=seo_data.get("alt_text"),
                 title_text=seo_data.get("title_text"),
+                exif_data=copyright_data.get("exif_data"),
+                copyright_score=copyright_data.get("copyright_score"),
+                risk_details=copyright_data.get("risk_details"),
                 created_at=datetime.utcnow(),
                 last_seen_at=datetime.utcnow()
             )
