@@ -405,7 +405,8 @@ async function updateStatus(ids, status) {
 
 async function exportList() {
     try {
-        const response = await fetch(`${API_BASE}/export?status=DELETE`);
+        const scanParam = currentScanId ? `&scan_id=${currentScanId}` : "";
+        const response = await fetch(`${API_BASE}/export?status=DELETE${scanParam}`);
         if (!response.ok) throw new Error("Ошибка экспорта");
 
         const blob = await response.blob();
