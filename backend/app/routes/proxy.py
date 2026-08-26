@@ -9,6 +9,10 @@ router = APIRouter()
 
 MAX_REDIRECTS = 3
 
+# Картинка по конкретному URL не меняется, а без кеша браузер перекачивает
+# всю галерею при каждом заходе и при прокрутке туда-обратно.
+CACHE_TTL = 86400
+
 
 @router.get("/image")
 async def proxy_image(url: str = Query(...)):
@@ -59,7 +63,13 @@ async def proxy_image(url: str = Query(...)):
         response.close()
         raise HTTPException(status_code=413, detail="Файл слишком большой")
 
+    headers = {"Cache-Control": f"public, max-age={CACHE_TTL}"}
+    for passthrough in ("etag", "last-modified"):
+        if response.headers.get(passthrough):
+            headers[passthrough] = response.headers[passthrough]
+
     return StreamingResponse(
         response.iter_content(chunk_size=8192),
         media_type=content_type,
+        headers=headers,
     )

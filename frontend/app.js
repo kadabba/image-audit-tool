@@ -2,7 +2,8 @@ const API_BASE = "/api";
 const HISTORY_KEY = "scanHistory";
 const HISTORY_LIMIT = 20;
 
-let selectedIds = new Set();
+// Отбираем по URL картинки: id размещений фронтенду не нужны
+let selectedUrls = new Set();
 let allImages = [];
 let currentScanToken = null;
 let scanPollTimeout = null;
@@ -134,7 +135,7 @@ function wireControls() {
 
 async function openScan(token, { fromShare = false } = {}) {
     currentScanToken = token;
-    selectedIds.clear();
+    selectedUrls.clear();
 
     try {
         const response = await fetch(`${API_BASE}/scan/${encodeURIComponent(token)}`);
@@ -250,7 +251,7 @@ async function startScan() {
 
     if (scanPollTimeout) clearTimeout(scanPollTimeout);
     scanStartTime = null;
-    selectedIds.clear();
+    selectedUrls.clear();
     document.getElementById("results").hidden = true;
     document.getElementById("shareHint").hidden = true;
 
@@ -308,34 +309,12 @@ async function loadGallery() {
     if (!currentScanToken) return;
 
     try {
-        const params = new URLSearchParams({ scan_token: currentScanToken, page: 1, limit: 10000 });
+        // Группировку делает сервер: одна запись на картинку со списком страниц
+        const params = new URLSearchParams({ scan_token: currentScanToken, page: 1, limit: 1000 });
         const response = await fetch(`${API_BASE}/images?${params}`);
         if (!response.ok) throw new Error(`Ошибка загрузки галереи: ${response.status}`);
 
-        const items = (await response.json()).items || [];
-
-        // Одна картинка = одна карточка, страницы собираем в список
-        const grouped = {};
-        items.forEach(img => {
-            if (!grouped[img.image_url]) {
-                grouped[img.image_url] = {
-                    ids: [], pages: [],
-                    image_url: img.image_url,
-                    status: img.status,
-                    http_status: img.http_status,
-                    file_size: img.file_size,
-                    format: img.format,
-                    copyright_score: img.copyright_score,
-                    risk_details: img.risk_details
-                };
-            }
-            grouped[img.image_url].ids.push(img.id);
-            if (!grouped[img.image_url].pages.includes(img.page_url)) {
-                grouped[img.image_url].pages.push(img.page_url);
-            }
-        });
-
-        allImages = Object.values(grouped);
+        allImages = (await response.json()).items || [];
         renderGallery();
     } catch (error) {
         console.error("Gallery error:", error);
@@ -365,7 +344,7 @@ function renderGallery() {
         const card = document.createElement("div");
         card.className = "card";
 
-        const isSelected = img.ids.some(id => selectedIds.has(id));
+        const isSelected = selectedUrls.has(img.image_url);
         if (isSelected) card.classList.add("selected");
 
         const risk = riskText[img.copyright_score] ? img.copyright_score : "low";
@@ -373,7 +352,8 @@ function renderGallery() {
 
         const pagesHtml = img.pages.map(p =>
             `<a href="${esc(safeUrl(p))}" target="_blank" rel="noopener noreferrer">${esc(p)}</a>`
-        ).join("");
+        ).join("") + (img.pages_total > img.pages.length
+            ? `<span class="muted">и ещё ${img.pages_total - img.pages.length}</span>` : "");
 
         card.innerHTML = `
             <div class="card-thumb">
@@ -398,14 +378,14 @@ function renderGallery() {
                     <span><a href="${esc(safeUrl(img.image_url))}" target="_blank" rel="noopener noreferrer">открыть</a></span>
                 </div>
                 <details class="card-links">
-                    <summary>На страницах (${img.pages.length})</summary>
+                    <summary>На страницах (${img.pages_total})</summary>
                     ${pagesHtml}
                 </details>
             </div>`;
 
         const checkbox = card.querySelector(".card-checkbox");
         const toggle = checked => {
-            toggleSelectMultiple(img.ids, checked);
+            checked ? selectedUrls.add(img.image_url) : selectedUrls.delete(img.image_url);
             card.classList.toggle("selected", checked);
         };
 
@@ -420,21 +400,17 @@ function renderGallery() {
     });
 }
 
-function toggleSelectMultiple(ids, checked) {
-    ids.forEach(id => checked ? selectedIds.add(id) : selectedIds.delete(id));
-}
-
 function selectAll() {
-    const all = allImages.every(img => img.ids.some(id => selectedIds.has(id)));
-    selectedIds.clear();
-    if (!all) allImages.forEach(img => img.ids.forEach(id => selectedIds.add(id)));
+    const all = allImages.every(img => selectedUrls.has(img.image_url));
+    selectedUrls.clear();
+    if (!all) allImages.forEach(img => selectedUrls.add(img.image_url));
     renderGallery();
 }
 
 function exportList() {
     // Отмеченное живёт только в браузере — файл собираем здесь же
     const urls = allImages
-        .filter(img => img.ids.some(id => selectedIds.has(id)))
+        .filter(img => selectedUrls.has(img.image_url))
         .map(img => img.image_url);
 
     if (!urls.length) {
