@@ -1,7 +1,9 @@
+# Имена контейнеров не задаём: container_name занимает имя глобально на весь
+# докер-демон и конфликтует с чужими проектами на том же сервере. Compose
+# именует их сам в пространстве имён проекта.
 services:
   db:
     image: postgres:15-alpine
-    container_name: image-audit-db
     environment:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:?укажите DB_PASSWORD в .env — см. .env.example}
@@ -22,7 +24,6 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: image-audit-tool
     # Наружу не открываем: проксирует веб-сервер с этой же машины.
     # Порт настраивается — на общем сервере 8000 бывает занят.
     ports:
