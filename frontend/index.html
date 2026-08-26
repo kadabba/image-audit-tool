@@ -101,6 +101,15 @@
                     <span id="resultsExpiry" class="expiry"></span>
                 </div>
                 <div class="results-actions">
+                    <label class="sort">
+                        <span class="sr-only">Сортировка</span>
+                        <select id="sortBy" aria-label="Сортировка">
+                            <option value="size">Сначала тяжёлые</option>
+                            <option value="risk">Сначала рискованные</option>
+                            <option value="http">Сначала битые</option>
+                            <option value="url">По адресу</option>
+                        </select>
+                    </label>
                     <button class="btn btn-ghost" onclick="selectAll()">Выбрать все</button>
                     <button class="btn btn-ghost" id="shareBtn">Поделиться</button>
                     <button class="btn btn-primary" onclick="exportList()">Скачать список</button>

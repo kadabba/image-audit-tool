@@ -351,19 +351,6 @@ main { max-width: var(--maxw); margin: 0 auto; padding: 0 20px 64px; }
 
 .card-meta { padding: 14px; font-size: .87rem; }
 
-.badge {
-    display: inline-block;
-    padding: 2px 9px;
-    border-radius: 99px;
-    font-size: .74rem;
-    font-weight: 600;
-    letter-spacing: .02em;
-    background: var(--surface-2);
-    color: var(--text-muted);
-}
-.badge.DELETE { background: rgba(192, 48, 58, .14); color: var(--danger); }
-.badge.KEEP { background: rgba(18, 130, 74, .14); color: var(--ok); }
-
 .card-row {
     display: flex;
     justify-content: space-between;
@@ -444,4 +431,28 @@ body.has-results .scan-panel {
 .share-link input:focus {
     outline: none;
     border-color: var(--accent);
+}
+
+.sort select {
+    font: inherit;
+    font-size: .92rem;
+    font-weight: 550;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.sort select:hover { background: var(--surface-2); }
+.sort select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
 }

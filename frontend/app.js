@@ -8,6 +8,7 @@ let allImages = [];
 let currentScanToken = null;
 let scanPollTimeout = null;
 let scanStartTime = null;
+let sortBy = "size";
 
 /* ---------- Безопасность вывода ----------
    Данные приходят со сканируемых сайтов, то есть от постороннего.
@@ -117,6 +118,11 @@ function wireControls() {
     });
 
     document.getElementById("shareBtn").addEventListener("click", shareScan);
+
+    document.getElementById("sortBy").addEventListener("change", e => {
+        sortBy = e.target.value;
+        renderGallery();
+    });
 
     const btn = document.getElementById("historyBtn");
     const menu = document.getElementById("historyMenu");
@@ -349,6 +355,27 @@ async function loadGallery() {
     }
 }
 
+// Порядок для сортировки по риску: сначала то, что требует внимания
+const RISK_ORDER = { high: 0, medium: 1, low: 2 };
+
+function sortImages(list) {
+    const copy = [...list];
+    if (sortBy === "size") {
+        // без размера — в конец: это не «лёгкие», а неизмеренные
+        copy.sort((a, b) => (b.file_size ?? -1) - (a.file_size ?? -1));
+    } else if (sortBy === "risk") {
+        copy.sort((a, b) => (RISK_ORDER[a.copyright_score] ?? 2) - (RISK_ORDER[b.copyright_score] ?? 2)
+            || (b.file_size ?? 0) - (a.file_size ?? 0));
+    } else if (sortBy === "http") {
+        // 200 в конец, битые и недоступные — наверх
+        const bad = x => (x.http_status === 200 ? 1 : 0);
+        copy.sort((a, b) => bad(a) - bad(b) || (a.http_status ?? 999) - (b.http_status ?? 999));
+    } else {
+        copy.sort((a, b) => a.image_url.localeCompare(b.image_url));
+    }
+    return copy;
+}
+
 function formatSize(size) {
     if (!size) return "—";
     if (size > 1048576) return (size / 1048576).toFixed(1) + " MB";
@@ -368,7 +395,7 @@ function renderGallery() {
     const riskIcon = { low: "✅", medium: "⚠️", high: "🚫" };
     const riskText = { low: "Низкий риск", medium: "Средний риск", high: "Высокий риск" };
 
-    allImages.forEach(img => {
+    sortImages(allImages).forEach(img => {
         const card = document.createElement("div");
         card.className = "card";
 
@@ -392,15 +419,15 @@ function renderGallery() {
             </div>
             <div class="card-meta">
                 <div class="card-row">
-                    <span class="badge ${esc(img.status)}">${esc(img.status)}</span>
-                    <span class="risk risk-${risk}" title="${esc(tooltip)}">${riskIcon[risk]} ${riskText[risk]}</span>
-                </div>
-                <div class="card-row">
                     <span>HTTP</span>
                     <span class="${img.http_status === 200 ? "status-ok" : "status-bad"}">${esc(img.http_status || "—")}</span>
                 </div>
                 <div class="card-row"><span>Формат</span><span>${esc(img.format || "—")}</span></div>
                 <div class="card-row"><span>Размер</span><span>${esc(formatSize(img.file_size))}</span></div>
+                <div class="card-row">
+                    <span>Авторские права</span>
+                    <span class="risk risk-${risk}" title="${esc(tooltip)}">${riskIcon[risk]} ${riskText[risk]}</span>
+                </div>
                 <div class="card-row">
                     <span>Файл</span>
                     <span><a href="${esc(safeUrl(img.image_url))}" target="_blank" rel="noopener noreferrer">открыть</a></span>
