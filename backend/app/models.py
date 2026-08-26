@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Enum, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Enum
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
@@ -15,7 +15,7 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -26,7 +26,7 @@ class User(Base):
 class Project(Base):
     __tablename__ = "projects"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     site_url = Column(String(255), nullable=False, index=True)
     name = Column(String(255))
@@ -46,7 +46,7 @@ class ScanStatus(str, enum.Enum):
 class Scan(Base):
     __tablename__ = "scans"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     # Наружу отдаём только token: инкрементный id перебирается и открывает чужие сканы
     token = Column(String(64), unique=True, index=True, nullable=False, default=new_scan_token)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
@@ -71,7 +71,7 @@ class CopyrightScore(str, enum.Enum):
 class Image(Base):
     __tablename__ = "images"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)
     page_url = Column(String(2048), nullable=False)
     image_url = Column(String(2048), nullable=False)
@@ -91,10 +91,6 @@ class Image(Base):
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_seen_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint("scan_id", "image_url", "page_url", name="uq_scan_image_page"),
-    )
 
     scan = relationship("Scan", back_populates="images")
 

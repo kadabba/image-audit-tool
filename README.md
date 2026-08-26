@@ -46,7 +46,8 @@ docker compose up -d
 | `DB_USER`     | `postgres`    | Пользователь БД |
 | `DB_NAME`     | `image_audit` | Имя базы |
 | `ENABLE_DOCS` | `true`        | Swagger по пути `/docs`. `false` закрывает его вместе с `/redoc` и `/openapi.json` |
-| `RETENTION_DAYS` | `30`       | Через сколько дней удалять сканы. `0` отключает уборку |
+| `RETENTION_DAYS` | `2`        | Через сколько дней удалять сканы. Дробные значения допустимы, `0` отключает уборку |
+| `PURGE_INTERVAL_HOURS` | `6`  | Как часто перезапускать уборку внутри работающего процесса |
 
 Лимиты правятся константами в [`backend/app/ratelimit.py`](backend/app/ratelimit.py):
 
@@ -139,6 +140,7 @@ location / {
 docker compose exec app python -m app.net_guard    # → net_guard: ok
 docker compose exec app python -m app.ratelimit    # → ratelimit: ok
 docker compose exec app python -m app.scanner      # → scanner: ok
+docker compose exec app python -m app.maintenance  # → maintenance: ok
 ```
 
 Структура:
@@ -158,6 +160,21 @@ frontend/            статика: галерея на ванильном JS
 remove-images.php    скрипт удаления для WP-CLI
 image_audit.py       предшественник: standalone-скрипт, генерирует HTML-отчёт
 ```
+
+## Объём базы
+
+Измерено: **619 байт на строку** до чистки индексов, около **12 картинок
+на страницу**. После перехода на хеш-индекс — примерно 400 байт, то есть
+**~5 КБ на просканированную страницу**. Скан сайта на 500 страниц весит
+около 2,5 МБ.
+
+Ретенция удерживает объём на полке: суточный прирост × `RETENTION_DAYS`.
+При 50 сканах в сутки по 300 страниц и сроке в 2 дня это порядка 150 МБ.
+
+Одна и та же картинка хранится отдельной строкой для каждой страницы,
+где она встречается: у сквозного логотипа это сотня строк на скан. Схема
+намеренно денормализована ради простых запросов; если объём станет
+проблемой, выносить картинки в отдельную таблицу со связью.
 
 ## Ограничения
 
@@ -182,6 +199,7 @@ image_audit.py       предшественник: standalone-скрипт, ге
 docker compose exec app python -m app.net_guard
 docker compose exec app python -m app.ratelimit
 docker compose exec app python -m app.scanner
+docker compose exec app python -m app.maintenance
 ```
 
 ## Лицензия

@@ -4,7 +4,9 @@ from fastapi.responses import FileResponse
 import os
 
 from .routes import scan, gallery, export, proxy
-from .maintenance import run_startup_tasks
+import asyncio
+
+from .maintenance import purge_loop, run_startup_tasks
 
 # Swagger открыт по умолчанию для удобства локальной разработки.
 # На публичном домене выключается через ENABLE_DOCS=false.
@@ -48,9 +50,10 @@ async def root():
 
 
 @app.on_event("startup")
-def _startup():
-    """Миграция схемы, разбор оборванных сканов и ретенция."""
+async def _startup():
+    """Миграция схемы, разбор оборванных сканов и запуск периодической уборки."""
     run_startup_tasks()
+    asyncio.create_task(purge_loop())
 
 
 @app.get("/api/health")
