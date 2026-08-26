@@ -1,0 +1,131 @@
+# Развёртывание на поддомене
+
+Инструкция для сервера с панелью управления (ISPmanager, aaPanel, FastPanel
+и подобные) и установленным Docker. Приложение слушает только `127.0.0.1`,
+а панель проксирует на него запросы с поддомена.
+
+## 1. DNS
+
+Заведите A-запись поддомена на IP сервера, например
+`audit.вашдомен.ru → 203.0.113.10`. Дождитесь, пока запись разойдётся:
+
+```bash
+dig +short audit.вашдомен.ru
+```
+
+## 2. Забрать код
+
+```bash
+cd /opt
+git clone https://github.com/kadabba/image-audit-tool.git
+cd image-audit-tool
+```
+
+## 3. Настроить окружение
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Обязательно задайте пароль базы — без него контейнеры не стартуют:
+
+```ini
+DB_PASSWORD=<вставьте вывод openssl rand -base64 32>
+ENABLE_DOCS=false      # закрывает Swagger на публичном домене
+APP_PORT=8000          # смените, если порт занят другим сайтом
+RETENTION_DAYS=2       # через сколько дней удалять сканы
+```
+
+Проверить, свободен ли порт:
+
+```bash
+ss -ltnp | grep :8000
+```
+
+## 4. Запустить
+
+```bash
+docker compose up -d --build
+docker compose ps          # оба сервиса должны быть healthy
+curl localhost:8000/api/health   # {"status":"ok"}
+```
+
+## 5. Настроить проксирование в панели
+
+Создайте поддомен и включите режим проксирования на `http://127.0.0.1:8000`.
+Название пункта отличается: «Proxy», «Reverse proxy», «Прокси-сервер».
+
+Если панель позволяет вписать директивы nginx вручную:
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 120s;
+}
+```
+
+**`X-Forwarded-For` обязателен.** По нему считается лимит сканирований на
+посетителя. Без него все посетители сольются в один адрес и будут делить
+пять сканов в час на всех.
+
+`proxy_read_timeout` увеличен, потому что запуск скана отвечает не мгновенно:
+сначала читается карта сайта.
+
+## 6. Выпустить сертификат
+
+В панели включите Let's Encrypt для поддомена — обычно это галочка «SSL»
+при создании. Проверьте, что сайт открывается по `https://`.
+
+## 7. Проверить
+
+```bash
+curl -s https://audit.вашдомен.ru/api/health          # {"status":"ok"}
+curl -s -o /dev/null -w "%{http_code}\n" https://audit.вашдомен.ru/docs   # 404 при ENABLE_DOCS=false
+```
+
+Откройте поддомен в браузере, просканируйте небольшой сайт и убедитесь,
+что галерея заполняется.
+
+## Обновление
+
+```bash
+cd /opt/image-audit-tool
+git pull
+docker compose up -d --build
+```
+
+Схема БД мигрируется при старте автоматически, данные в томе сохраняются.
+
+## Обслуживание
+
+```bash
+docker compose logs -f app          # смотреть логи
+docker compose restart app          # перезапустить
+docker compose down                 # остановить (данные остаются)
+docker compose down -v              # остановить и СТЕРЕТЬ базу
+```
+
+Бэкап базы:
+
+```bash
+docker compose exec -T db pg_dump -U postgres image_audit | gzip > backup-$(date +%F).sql.gz
+```
+
+## Если что-то не работает
+
+**502 от панели.** Контейнер не поднялся или порт не совпадает:
+`docker compose ps` и `docker compose logs app`.
+
+**Контейнеры не стартуют.** Скорее всего не задан `DB_PASSWORD` — compose
+об этом прямо пишет.
+
+**Все посетители упираются в лимит сканирований.** Панель не передаёт
+`X-Forwarded-For`, приложение видит один IP. Проверьте заголовки в конфиге.
+
+**Скан не находит страниц.** У сайта нет `sitemap.xml`, и обход по ссылкам
+ограничен сотней страниц. Это ожидаемое поведение, см. README.

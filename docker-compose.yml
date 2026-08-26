@@ -22,8 +22,10 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: image-audit-tool
+    # Наружу не открываем: проксирует веб-сервер с этой же машины.
+    # Порт настраивается — на общем сервере 8000 бывает занят.
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - DB_USER=${DB_USER:-postgres}
@@ -37,6 +39,13 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   postgres_data:
