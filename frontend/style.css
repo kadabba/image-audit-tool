@@ -422,3 +422,26 @@ body.has-results .scan-panel {
     .results-bar { position: static; }
     .hero { padding-top: 30px; }
 }
+
+.share-link {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 4px;
+}
+
+.share-link input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: .87rem;
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.share-link input:focus {
+    outline: none;
+    border-color: var(--accent);
+}

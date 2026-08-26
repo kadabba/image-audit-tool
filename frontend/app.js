@@ -135,7 +135,8 @@ function wireControls() {
 
 async function openScan(token, { fromShare = false } = {}) {
     currentScanToken = token;
-    selectedUrls.clear();
+    clearResults();
+    history.replaceState(null, "", `?scan=${encodeURIComponent(token)}`);
 
     try {
         const response = await fetch(`${API_BASE}/scan/${encodeURIComponent(token)}`);
@@ -169,6 +170,21 @@ async function openScan(token, { fromShare = false } = {}) {
 }
 
 /* ---------- Сканирование ---------- */
+
+// Сбрасываем предыдущий скан целиком. Спрятать секцию мало: пока грузится
+// новая галерея, allImages держит старые данные, и «Скачать список»
+// отдал бы ссылки предыдущего сайта.
+function clearResults() {
+    allImages = [];
+    selectedUrls.clear();
+    document.getElementById("gallery").innerHTML = "";
+    document.getElementById("results").hidden = true;
+    document.getElementById("shareHint").hidden = true;
+    document.getElementById("resultsCount").textContent = "—";
+    document.getElementById("resultsSite").textContent = "";
+    document.getElementById("resultsExpiry").textContent = "";
+}
+
 function showStatus(kind, html) {
     const el = document.getElementById("scanStatus");
     el.hidden = false;
@@ -251,9 +267,7 @@ async function startScan() {
 
     if (scanPollTimeout) clearTimeout(scanPollTimeout);
     scanStartTime = null;
-    selectedUrls.clear();
-    document.getElementById("results").hidden = true;
-    document.getElementById("shareHint").hidden = true;
+    clearResults();
 
     try {
         const response = await fetch(`${API_BASE}/scan/`, {
@@ -292,16 +306,30 @@ async function shareScan() {
     try {
         await navigator.clipboard.writeText(url);
     } catch {
-        copied = false;  // нет доступа к буферу (не https или отказ) — показываем ссылку целиком
+        copied = false;  // нет доступа к буферу (не https или отказ)
     }
 
     const hint = document.getElementById("shareHint");
     hint.hidden = false;
-    hint.innerHTML = copied
-        ? `<strong>Ссылка скопирована.</strong>${esc(until)}
-           <span class="warn">Открыть скан сможет любой, у кого есть эта ссылка.</span>`
-        : `<strong>Скопируйте ссылку:</strong> <code>${esc(url)}</code>${esc(until)}
-           <span class="warn">Открыть скан сможет любой, у кого есть эта ссылка.</span>`;
+    hint.innerHTML = `
+        <strong>${copied ? "Ссылка скопирована." : "Скопируйте ссылку:"}</strong>${esc(until)}
+        <div class="share-link">
+            <input type="text" readonly value="${esc(url)}" aria-label="Ссылка на скан">
+            <button class="btn btn-ghost" type="button">Копировать</button>
+        </div>
+        <span class="warn">Открыть скан сможет любой, у кого есть эта ссылка.</span>`;
+
+    // Клик по полю выделяет ссылку целиком — удобнее, чем ловить её мышью
+    const field = hint.querySelector("input");
+    field.addEventListener("focus", () => field.select());
+    hint.querySelector("button").addEventListener("click", async () => {
+        field.select();
+        try {
+            await navigator.clipboard.writeText(url);
+        } catch {
+            document.execCommand("copy");  // запасной путь для http и старых браузеров
+        }
+    });
 }
 
 /* ---------- Галерея ---------- */
