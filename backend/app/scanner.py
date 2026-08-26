@@ -3,99 +3,120 @@
 """
 
 import asyncio
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, urlparse
 import xml.etree.ElementTree as ET
-from sqlalchemy.orm import Session
-from .models import Image, Scan
 from datetime import datetime
-from .audit_technical import check_image_technical
-from .audit_seo import extract_image_attributes
-from .audit_copyright import analyze_copyright_risk
+from urllib.parse import urljoin, urlparse
+
 import httpx
+from bs4 import BeautifulSoup
+from sqlalchemy.orm import Session
+
+from .audit_copyright import analyze_copyright_risk
+from .audit_technical import check_image_technical
+from .models import Image, Scan
+from .net_guard import check_public_url
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ImageAuditBot/1.0)"}
 
+PAGE_TIMEOUT = 15.0
+MAX_SITEMAP_BYTES = 10 * 1024 * 1024
+BATCH_SIZE = 5
 
-def get_sitemap_urls(base_url):
-    """Пытается найти sitemap.xml (в т.ч. sitemap index) и собрать все URL страниц."""
-    candidates = [
-        urljoin(base_url, "/sitemap.xml"),
-        urljoin(base_url, "/sitemap_index.xml"),
-    ]
+
+def _is_scannable(url: str) -> bool:
+    """Пускаем только публичные http(s)-адреса: sitemap и ссылки приходят извне."""
+    try:
+        check_public_url(url)
+        return True
+    except ValueError:
+        return False
+
+
+def _parse_sitemap(content: bytes):
+    """
+    Разбирает sitemap. Отклоняет объявления сущностей: ElementTree их раскрывает,
+    и вложенные сущности («billion laughs») выжирают память.
+    """
+    if len(content) > MAX_SITEMAP_BYTES:
+        raise ValueError("sitemap слишком большой")
+    if b"<!ENTITY" in content or b"<!DOCTYPE" in content:
+        raise ValueError("sitemap содержит объявления DTD или сущностей")
+    return ET.fromstring(content)
+
+
+async def get_sitemap_urls(base_url: str) -> list:
+    """Ищет sitemap.xml (в т.ч. sitemap index) и собирает URL страниц."""
+    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
     urls = set()
-    for sitemap_url in candidates:
-        try:
-            r = requests.get(sitemap_url, headers=HEADERS, timeout=15)
-            if r.status_code != 200:
-                continue
-            root = ET.fromstring(r.content)
-            ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-            # Если это sitemap index — там <sitemap><loc>
-            sub_sitemaps = [el.text for el in root.findall(".//sm:sitemap/sm:loc", ns)]
-            if sub_sitemaps:
-                for sm in sub_sitemaps:
-                    try:
-                        rr = requests.get(sm, headers=HEADERS, timeout=15)
-                        sroot = ET.fromstring(rr.content)
-                        for loc in sroot.findall(".//sm:url/sm:loc", ns):
+
+    async with httpx.AsyncClient(timeout=PAGE_TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
+        for name in ("/sitemap.xml", "/sitemap_index.xml"):
+            sitemap_url = urljoin(base_url, name)
+            try:
+                r = await client.get(sitemap_url)
+                if r.status_code != 200:
+                    continue
+                root = _parse_sitemap(r.content)
+
+                sub = [el.text for el in root.findall(".//sm:sitemap/sm:loc", ns) if el.text]
+                if sub:
+                    for sm in sub:
+                        if not _is_scannable(sm):
+                            continue
+                        try:
+                            rr = await client.get(sm)
+                            for loc in _parse_sitemap(rr.content).findall(".//sm:url/sm:loc", ns):
+                                if loc.text:
+                                    urls.add(loc.text.strip())
+                        except Exception as e:
+                            print(f"  ! Не удалось прочитать вложенный sitemap {sm}: {e}")
+                else:
+                    for loc in root.findall(".//sm:url/sm:loc", ns):
+                        if loc.text:
                             urls.add(loc.text.strip())
-                    except Exception as e:
-                        print(f"  ! Не удалось прочитать вложенный sitemap {sm}: {e}")
-            else:
-                for loc in root.findall(".//sm:url/sm:loc", ns):
-                    urls.add(loc.text.strip())
-            if urls:
-                break
-        except Exception as e:
-            print(f"  ! Не удалось прочитать {sitemap_url}: {e}")
-    return sorted(urls)
+                if urls:
+                    break
+            except Exception as e:
+                print(f"  ! Не удалось прочитать {sitemap_url}: {e}")
+
+    return sorted(u for u in urls if _is_scannable(u))
 
 
-def crawl_internal_links(base_url, max_pages=100):
-    """Обходит сайт по внутренним ссылкам с главной страницы, если sitemap не найден."""
+async def crawl_internal_links(base_url: str, max_pages: int = 100) -> list:
+    """Обходит сайт по внутренним ссылкам, если sitemap не найден."""
     domain = urlparse(base_url).netloc
     visited = set()
     to_visit = [base_url + "/"]
+    skip_ext = (".jpg", ".jpeg", ".png", ".webp", ".pdf", ".svg", ".gif", ".zip", ".doc", ".docx")
 
-    while to_visit and len(visited) < max_pages:
-        url = to_visit.pop(0)
-        if url in visited:
-            continue
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=15)
-            if r.status_code != 200:
+    async with httpx.AsyncClient(timeout=PAGE_TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
+        while to_visit and len(visited) < max_pages:
+            url = to_visit.pop(0)
+            if url in visited or not _is_scannable(url):
                 continue
-        except Exception:
-            continue
+            try:
+                r = await client.get(url)
+                if r.status_code != 200:
+                    continue
+            except Exception:
+                continue
 
-        visited.add(url)
-        soup = BeautifulSoup(r.text, "html.parser")
-        for a in soup.find_all("a", href=True):
-            link = urljoin(url, a["href"]).split("#")[0]
-            parsed = urlparse(link)
-            if parsed.netloc == domain and link not in visited and link not in to_visit:
-                # пропускаем файлы, оставляем только html-страницы
-                if not any(link.lower().endswith(ext) for ext in
-                           (".jpg", ".jpeg", ".png", ".webp", ".pdf", ".svg", ".gif", ".zip", ".doc", ".docx")):
+            visited.add(url)
+            for a in BeautifulSoup(r.text, "html.parser").find_all("a", href=True):
+                link = urljoin(url, a["href"]).split("#")[0]
+                if urlparse(link).netloc != domain:
+                    continue
+                if link in visited or link in to_visit:
+                    continue
+                if not any(link.lower().endswith(ext) for ext in skip_ext):
                     to_visit.append(link)
 
     return sorted(visited)
 
 
-def extract_images(page_url):
-    """Возвращает список абсолютных URL картинок на странице."""
-    try:
-        r = requests.get(page_url, headers=HEADERS, timeout=15)
-        if r.status_code != 200:
-            print(f"  ! {page_url} -> статус {r.status_code}")
-            return []
-    except Exception as e:
-        print(f"  ! Ошибка загрузки {page_url}: {e}")
-        return []
-
-    soup = BeautifulSoup(r.text, "html.parser")
+def _images_from_html(page_url: str, html: str) -> list:
+    """Достаёт абсолютные URL картинок из HTML страницы."""
+    soup = BeautifulSoup(html, "html.parser")
     images = set()
 
     for img in soup.find_all("img"):
@@ -104,7 +125,6 @@ def extract_images(page_url):
             if val:
                 images.add(urljoin(page_url, val))
 
-    # picture > source srcset
     for source in soup.find_all("source"):
         srcset = source.get("srcset")
         if srcset:
@@ -112,7 +132,6 @@ def extract_images(page_url):
             if first:
                 images.add(urljoin(page_url, first))
 
-    # background-image
     for el in soup.find_all(style=True):
         style = el["style"]
         if "background-image" in style and "url(" in style:
@@ -126,62 +145,40 @@ def extract_images(page_url):
     return sorted(images)
 
 
-async def extract_images_async(page_url):
-    """Асинхронная версия для параллельной загрузки нескольких страниц."""
+async def extract_images_async(page_url: str) -> list:
+    """Загружает страницу и возвращает найденные на ней картинки."""
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            r = await client.get(page_url, follow_redirects=True)
+        async with httpx.AsyncClient(timeout=PAGE_TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
+            r = await client.get(page_url)
             if r.status_code != 200:
                 return []
     except Exception:
         return []
 
-    soup = BeautifulSoup(r.text, "html.parser")
-    images = set()
-
-    for img in soup.find_all("img"):
-        for attr in ("src", "data-src", "data-original"):
-            val = img.get(attr)
-            if val:
-                images.add(urljoin(page_url, val))
-
-    for source in soup.find_all("source"):
-        srcset = source.get("srcset")
-        if srcset:
-            first = srcset.split(",")[0].strip().split(" ")[0]
-            if first:
-                images.add(urljoin(page_url, first))
-
-    for el in soup.find_all(style=True):
-        style = el["style"]
-        if "background-image" in style and "url(" in style:
-            try:
-                url_part = style.split("url(")[1].split(")")[0].strip("'\" ")
-                if url_part:
-                    images.add(urljoin(page_url, url_part))
-            except IndexError:
-                pass
-
-    return sorted(images)
+    return _images_from_html(page_url, r.text)
 
 
-async def scan_site_async(db: Session, scan_id: int, site_url: str, enable_seo: bool = False):
-    """
-    Асинхронное сканирование сайта с техническим аудитом.
-    SEO парсинг отключен по умолчанию для скорости (498 страниц → 5-10 мин вместо 60+).
-    """
+async def audit_image(img_url: str) -> dict:
+    """Технический аудит + авторские права. Тело картинки скачивается один раз."""
+    tech_data = await check_image_technical(img_url)
+    body = tech_data.pop("_body", None)
+    copyright_data = await analyze_copyright_risk(img_url, image_data=body)
+    return {"url": img_url, "tech": tech_data, "copyright": copyright_data}
+
+
+async def scan_site_async(db: Session, scan_id: int, site_url: str):
+    """Асинхронное сканирование сайта с техническим и copyright-аудитом."""
     site_url = site_url.rstrip("/")
 
     print(f"Ищу sitemap для {site_url} ...")
-    pages = get_sitemap_urls(site_url)
+    pages = await get_sitemap_urls(site_url)
 
     if not pages:
         print("Sitemap не найден или пуст. Обхожу сайт по внутренним ссылкам (макс. 100 страниц)...")
-        pages = crawl_internal_links(site_url, max_pages=100)
+        pages = await crawl_internal_links(site_url, max_pages=100)
 
-    print(f"Найдено страниц: {len(pages)} (SEO: {'ON' if enable_seo else 'OFF'})")
+    print(f"Найдено страниц: {len(pages)}")
 
-    # Обновляем scan с количеством страниц и временем начала
     scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if scan:
         scan.total_pages = len(pages)
@@ -190,96 +187,91 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str, enable_seo: 
 
     count = 0
 
-    async def audit_image(img_url: str):
-        """Аудит одного изображения - техника + авторские права (SEO опционально)"""
-        tech_data = await check_image_technical(img_url)
-        seo_data = await extract_image_attributes(page, img_url) if enable_seo else {}
-        copyright_data = await analyze_copyright_risk(img_url)
-        return {
-            'img_url': img_url,
-            'tech_data': tech_data,
-            'seo_data': seo_data,
-            'copyright_data': copyright_data
-        }
-
-    # ponytail: параллельная обработка страниц батчами, если нужна max скорость
-    async def process_page(page_idx_tuple):
-        """Обработать одну страницу: загрузить изображения и их аудит"""
-        i, page = page_idx_tuple
+    async def process_page(page: str):
         try:
-            imgs = await extract_images_async(page)
+            imgs = [u for u in await extract_images_async(page) if _is_scannable(u)]
             if not imgs:
-                return i, []
-
-            # Параллельно обрабатываем все изображения на странице
-            tasks = [audit_image(img_url) for img_url in imgs]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            page_images = []
-            for result in results:
-                if isinstance(result, Exception):
-                    continue
-
-                img_url = result['img_url']
-                tech_data = result['tech_data']
-                seo_data = result['seo_data']
-                copyright_data = result['copyright_data']
-
-                page_images.append({
-                    'url': img_url,
-                    'tech': tech_data,
-                    'seo': seo_data,
-                    'copyright': copyright_data
-                })
-
-            return i, page_images
+                return page, []
+            results = await asyncio.gather(*(audit_image(u) for u in imgs), return_exceptions=True)
+            return page, [r for r in results if not isinstance(r, BaseException)]
         except Exception as e:
             print(f"  ✗ Ошибка при обработке {page}: {e}")
-            return i, []
+            return page, []
 
-    # Обрабатываем страницы батчами по 5 одновременно (избегаем перегрузки сети)
-    batch_size = 5
-    for batch_start in range(0, len(pages), batch_size):
-        batch = list(enumerate(pages[batch_start:batch_start+batch_size], batch_start+1))
-        results = await asyncio.gather(*[process_page(item) for item in batch], return_exceptions=True)
+    for start in range(0, len(pages), BATCH_SIZE):
+        batch = pages[start:start + BATCH_SIZE]
+        results = await asyncio.gather(*(process_page(p) for p in batch), return_exceptions=True)
 
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 continue
-            i, page_images = result
-            page = pages[i-1]
+            page, page_images = result
 
-            for img_data in page_images:
-                new_img = Image(
+            for img in page_images:
+                db.add(Image(
                     scan_id=scan_id,
-                    image_url=img_data['url'],
+                    image_url=img["url"],
                     page_url=page,
                     status="NEW",
-                    http_status=img_data['tech'].get("http_status"),
-                    file_size=img_data['tech'].get("file_size"),
-                    format=img_data['tech'].get("format"),
-                    width=img_data['tech'].get("width"),
-                    height=img_data['tech'].get("height"),
-                    alt_text=img_data['seo'].get("alt_text"),
-                    title_text=img_data['seo'].get("title_text"),
-                    exif_data=img_data['copyright'].get("exif_data"),
-                    copyright_score=img_data['copyright'].get("copyright_score"),
-                    risk_details=img_data['copyright'].get("risk_details"),
+                    http_status=img["tech"].get("http_status"),
+                    file_size=img["tech"].get("file_size"),
+                    format=img["tech"].get("format"),
+                    width=img["tech"].get("width"),
+                    height=img["tech"].get("height"),
+                    exif_data=img["copyright"].get("exif_data"),
+                    copyright_score=img["copyright"].get("copyright_score"),
+                    risk_details=img["copyright"].get("risk_details"),
                     created_at=datetime.utcnow(),
-                    last_seen_at=datetime.utcnow()
-                )
-                db.add(new_img)
+                    last_seen_at=datetime.utcnow(),
+                ))
                 count += 1
 
-            print(f"[{i}/{len(pages)}] {page} → {len(page_images)} изображений")
+            done = min(start + BATCH_SIZE, len(pages))
+            print(f"[{done}/{len(pages)}] {page} → {len(page_images)} изображений")
 
-        # Обновляем прогресс после каждого батча
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan:
-            scan.scanned_pages = min(batch_start + batch_size, len(pages))
-            db.commit()
+            scan.scanned_pages = min(start + BATCH_SIZE, len(pages))
+        db.commit()
 
-    print(f"\nКоммитим {count} изображений...")
-    db.commit()
     print(f"Всего найдено и сохранено: {count}")
     return {"count": count}
+
+
+def demo():
+    """Самопроверка разбора и фильтрации. Запуск: python -m app.scanner"""
+    # sitemap: бомбы и переростки отклоняются, нормальный разбирается
+    for bad, why in [
+        (b'<!DOCTYPE l [<!ENTITY a "AA">]><r>&a;</r>', "сущности"),
+        (b"x" * (MAX_SITEMAP_BYTES + 1), "размер"),
+    ]:
+        try:
+            _parse_sitemap(bad)
+            raise AssertionError(f"должен был отклонить: {why}")
+        except ValueError:
+            pass
+
+    ok = (b'<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+          b"<url><loc>https://a.test/</loc></url></urlset>")
+    assert _parse_sitemap(ok).tag.endswith("urlset")
+
+    # внутренняя сеть недоступна, даже если адрес пришёл со сканируемого сайта
+    for internal in ("http://127.0.0.1:8000/", "http://169.254.169.254/", "http://10.0.0.1/"):
+        assert not _is_scannable(internal), internal
+    assert _is_scannable("https://example.com/img.png")
+
+    # картинки достаются из src, srcset и inline-фона
+    html = ('<img src="/a.png"><img data-src="/b.png">'
+            '<picture><source srcset="/c.webp 1x, /d.webp 2x"></picture>'
+            '<div style="background-image: url(\'/e.jpg\')"></div>')
+    found = _images_from_html("https://s.test/page", html)
+    assert found == [
+        "https://s.test/a.png", "https://s.test/b.png",
+        "https://s.test/c.webp", "https://s.test/e.jpg",
+    ], found
+
+    print("scanner: ok")
+
+
+if __name__ == "__main__":
+    demo()

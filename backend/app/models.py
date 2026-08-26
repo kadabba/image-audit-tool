@@ -2,6 +2,12 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.orm import declarative_base, relationship
 from datetime import datetime
 import enum
+import secrets
+
+
+def new_scan_token() -> str:
+    """Непредсказуемый идентификатор скана для внешних ссылок."""
+    return secrets.token_urlsafe(16)
 
 Base = declarative_base()
 
@@ -41,6 +47,8 @@ class Scan(Base):
     __tablename__ = "scans"
 
     id = Column(Integer, primary_key=True, index=True)
+    # Наружу отдаём только token: инкрементный id перебирается и открывает чужие сканы
+    token = Column(String(64), unique=True, index=True, nullable=False, default=new_scan_token)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     status = Column(Enum(ScanStatus), default=ScanStatus.pending, nullable=False)
     total_pages = Column(Integer, default=0)
@@ -76,10 +84,6 @@ class Image(Base):
     width = Column(Integer, nullable=True)
     height = Column(Integer, nullable=True)
 
-    # SEO аудит
-    alt_text = Column(Text, nullable=True)
-    title_text = Column(Text, nullable=True)
-
     # Copyright аудит
     exif_data = Column(JSON, nullable=True)
     copyright_score = Column(Enum(CopyrightScore), default=CopyrightScore.low)
@@ -106,8 +110,6 @@ class Image(Base):
             "format": self.format,
             "width": self.width,
             "height": self.height,
-            "alt_text": self.alt_text,
-            "title_text": self.title_text,
             "copyright_score": self.copyright_score.value if self.copyright_score else None,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "last_seen_at": self.last_seen_at.isoformat() if self.last_seen_at else None,

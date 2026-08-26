@@ -3,37 +3,35 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from io import StringIO
 from ..db import get_db
-from ..models import Image, Scan
+from ..models import Image
+from .scan import get_scan_by_token
 
 router = APIRouter()
 
 
+@router.get("")
 @router.get("/")
 async def export_urls(
+    scan_token: str = Query(..., description="Токен скана, выданный при запуске"),
     status: str = Query("DELETE"),
-    scan_id: int = Query(None),
     db: Session = Depends(get_db)
 ):
     """
     Экспортировать список URL изображений в .txt формате.
 
-    GET /api/export?status=DELETE&scan_id=1
+    GET /api/export?scan_token=...&status=DELETE
 
     Возвращает текстовый файл (один URL на строку), совместимый с remove-images.php
     """
-    # Если не указан scan_id, используем последний скан
-    if not scan_id:
-        last_scan = db.query(Scan).order_by(Scan.id.desc()).first()
-        if last_scan:
-            scan_id = last_scan.id
+    scan = get_scan_by_token(scan_token, db)
 
-    query = db.query(Image.image_url).distinct().filter(Image.status == status)
-    if scan_id:
-        query = query.filter(Image.scan_id == scan_id)
+    urls = (
+        db.query(Image.image_url)
+        .distinct()
+        .filter(Image.status == status, Image.scan_id == scan.id)
+        .all()
+    )
 
-    urls = query.all()
-
-    # Генерируем текстовый контент
     output = StringIO()
     for (url,) in urls:
         output.write(url + "\n")

@@ -46,6 +46,7 @@ docker compose up -d
 | `DB_USER`     | `postgres`    | Пользователь БД |
 | `DB_NAME`     | `image_audit` | Имя базы |
 | `ENABLE_DOCS` | `true`        | Swagger по пути `/docs`. `false` закрывает его вместе с `/redoc` и `/openapi.json` |
+| `RETENTION_DAYS` | `30`       | Через сколько дней удалять сканы. `0` отключает уборку |
 
 Лимиты правятся константами в [`backend/app/ratelimit.py`](backend/app/ratelimit.py):
 
@@ -75,10 +76,16 @@ wp eval-file remove-images.php delete-images.txt apply
 
 | Метод  | Путь                    | Назначение |
 |--------|-------------------------|------------|
-| `POST` | `/api/scan/`            | Запустить скан: `{"site_url": "https://example.com"}` → `scan_id` |
-| `GET`  | `/api/scan/{id}`        | Статус и прогресс скана |
-| `GET`  | `/api/images?scan_id=N` | Галерея скана (без `scan_id` вернёт пусто) |
-| `GET`  | `/api/image?url=...`    | Прокси картинки в обход CORS и хотлинк-защиты |
+| `POST` | `/api/scan/`               | Запустить скан: `{"site_url": "https://example.com"}` → `scan_token` |
+| `GET`  | `/api/scan/{token}`        | Статус и прогресс скана |
+| `GET`  | `/api/images?scan_token=…` | Галерея скана |
+| `POST` | `/api/images/status`       | Статусы картинок внутри своего скана |
+| `GET`  | `/api/export?scan_token=…` | Список URL в `.txt` |
+| `GET`  | `/api/image?url=...`       | Прокси картинки в обход CORS и хотлинк-защиты |
+
+`scan_token` — непредсказуемая строка, выданная при запуске. Она и есть ключ
+доступа: знающий токен видит скан, остальные нет. Номера сканов наружу
+не отдаются, чтобы их нельзя было перебрать.
 
 Пути указаны относительно адреса, на котором развёрнут сервис: при локальном
 запуске это `http://localhost:8000`, в продакшене — ваш домен.
@@ -116,8 +123,13 @@ location / {
   (`169.254.169.254`) и внутренние сервисы любому желающему.
 - **Лимиты** ([`ratelimit.py`](backend/app/ratelimit.py)) не дают одному
   посетителю завалить чужой сайт запросами с вашего IP и получить бан.
-- **Изоляция результатов**: `scan_id` хранится в localStorage браузера,
-  посетители не видят сканы друг друга. Аккаунтов нет и не требуется.
+- **Доступ к скану по токену**: результаты открываются только по
+  непредсказуемому `scan_token`, он же хранится в localStorage браузера.
+  Аккаунтов нет. Учтите: токен — это ссылка-секрет; кто её получил, тот
+  видит скан, поэтому для разграничения прав между сотрудниками нужны
+  полноценные аккаунты.
+- **Экранирование вывода**: URL приходят с чужих сайтов и попадают в галерею,
+  поэтому экранируются, а ссылки ограничены схемами `http(s)`.
 
 ## Разработка
 
@@ -126,6 +138,7 @@ location / {
 ```bash
 docker compose exec app python -m app.net_guard    # → net_guard: ok
 docker compose exec app python -m app.ratelimit    # → ratelimit: ok
+docker compose exec app python -m app.scanner      # → scanner: ok
 ```
 
 Структура:
@@ -136,9 +149,9 @@ backend/app/
   scanner.py         обход сайта, сбор картинок, оркестрация аудита
   models.py          схема БД: User → Project → Scan → Image
   net_guard.py       защита от SSRF
+  maintenance.py     миграция схемы, ретенция, разбор оборванных сканов
   ratelimit.py       лимиты запуска сканов
   audit_technical.py HTTP-статус, формат, вес, размеры
-  audit_seo.py       alt/title (выключено по умолчанию, см. ниже)
   audit_copyright.py EXIF и оценка риска
   routes/            scan, gallery, export, proxy
 frontend/            статика: галерея на ванильном JS
@@ -148,9 +161,8 @@ image_audit.py       предшественник: standalone-скрипт, ге
 
 ## Ограничения
 
-- **SEO-аудит выключен по умолчанию.** Он перезагружает HTML страницы под
-  каждую картинку и замедляет скан в разы. Включается флагом
-  `enable_seo=True` в `scan_site_async()`.
+- **SEO-аудита (alt/title) нет.** Он требовал повторной загрузки HTML под
+  каждую картинку и замедлял скан в разы, поэтому убран.
 - Счётчики лимитов живут в памяти процесса — рассчитаны на один
   uvicorn-воркер. При масштабировании переносить в Redis.
 - Краулер без sitemap ограничен 100 страницами.
@@ -169,6 +181,7 @@ image_audit.py       предшественник: standalone-скрипт, ге
 ```bash
 docker compose exec app python -m app.net_guard
 docker compose exec app python -m app.ratelimit
+docker compose exec app python -m app.scanner
 ```
 
 ## Лицензия

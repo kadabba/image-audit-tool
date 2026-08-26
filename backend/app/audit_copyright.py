@@ -7,6 +7,8 @@ from PIL import Image as PILImage
 from PIL.ExifTags import TAGS
 import httpx
 
+from .audit_technical import MAX_IMAGE_BYTES
+
 
 async def analyze_copyright_risk(image_url: str, image_data: bytes = None) -> dict:
     """
@@ -24,10 +26,16 @@ async def analyze_copyright_risk(image_url: str, image_data: bytes = None) -> di
     risk_details = {"reason": "No EXIF data found", "confidence": 0}
 
     try:
-        # Если image_data не передана, скачиваем
+        # Обычно тело приходит из технического аудита; качаем только как запасной путь
         if not image_data:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(image_url, follow_redirects=True)
+                if len(response.content) > MAX_IMAGE_BYTES:
+                    return {
+                        "copyright_score": copyright_score,
+                        "exif_data": exif_data,
+                        "risk_details": {"reason": "Image too large to analyse", "confidence": 0},
+                    }
                 if response.status_code != 200:
                     return {
                         "copyright_score": copyright_score,

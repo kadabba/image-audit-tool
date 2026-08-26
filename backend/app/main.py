@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 import os
 
 from .routes import scan, gallery, export, proxy
+from .maintenance import run_startup_tasks
 
 # Swagger открыт по умолчанию для удобства локальной разработки.
 # На публичном домене выключается через ENABLE_DOCS=false.
@@ -44,6 +45,12 @@ async def root():
         if os.path.exists(index_path):
             return FileResponse(index_path)
     return {"message": "Image Audit Tool API - frontend not found"}
+
+
+@app.on_event("startup")
+def _startup():
+    """Миграция схемы, разбор оборванных сканов и ретенция."""
+    run_startup_tasks()
 
 
 @app.get("/api/health")

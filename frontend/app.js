@@ -1,73 +1,65 @@
 const API_BASE = "/api";
-let currentPage = 1;
-const PAGE_SIZE = 50;
 let selectedIds = new Set();
 let allImages = [];
-let currentSiteUrl = "";
-let currentScanId = null;
+let currentScanToken = null;
 let scanPollTimeout = null;
-let filters = {
-    status: "",
-    page: ""
-};
-
-// Загружаем последний скан при загрузке страницы
-window.addEventListener('load', async () => {
-    // Только свой скан из localStorage — чужие сканы не подтягиваем
-    const lastScanId = localStorage.getItem('lastScanId');
-
-    if (lastScanId) {
-        currentScanId = parseInt(lastScanId);
-        console.log('Loading gallery for scan:', currentScanId);
-        loadGallery();
-    } else {
-        console.log('No scan found');
-    }
-});
-
 let scanStartTime = null;
 
-async function pollScanStatus(scanId) {
-    try {
-        const response = await fetch(`${API_BASE}/scan/${scanId}`, {
-            method: "GET"
-        });
+// Данные приходят со сканируемых сайтов, то есть от постороннего.
+// Без экранирования кавычка в URL закрывает атрибут и даёт выполнение чужого кода.
+function esc(value) {
+    return String(value ?? "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+}
 
+// В href пускаем только http(s): javascript:-ссылка сработала бы по клику.
+function safeUrl(value) {
+    try {
+        const u = new URL(value, window.location.href);
+        return (u.protocol === "http:" || u.protocol === "https:") ? u.href : "#";
+    } catch {
+        return "#";
+    }
+}
+
+window.addEventListener("load", () => {
+    currentScanToken = localStorage.getItem("scanToken");
+    if (currentScanToken) loadGallery();
+});
+
+async function pollScanStatus(token) {
+    try {
+        const response = await fetch(`${API_BASE}/scan/${encodeURIComponent(token)}`);
         if (!response.ok) return;
 
         const data = await response.json();
         const statusDiv = document.getElementById("scanStatus");
 
         if (data.status === "running") {
-            // Рассчитываем оценку времени
             if (!scanStartTime) scanStartTime = Date.now();
-            const elapsed = (Date.now() - scanStartTime) / 1000; // секунды
+            const elapsed = (Date.now() - scanStartTime) / 1000;
             let timeRemaining = "...";
 
             if (data.progress > 5 && elapsed > 10) {
-                const rate = elapsed / data.progress; // сек на процент
-                const remainingPercent = 100 - data.progress;
-                const remainingSecs = Math.round(rate * remainingPercent);
+                const remainingSecs = Math.round((elapsed / data.progress) * (100 - data.progress));
                 const mins = Math.ceil(remainingSecs / 60);
-                timeRemaining = mins > 0 ? `~${mins} мин` : `<1 мин`;
+                timeRemaining = mins > 0 ? `~${mins} мин` : "<1 мин";
             }
 
-            const progressBar = `
+            statusDiv.className = "status loading";
+            statusDiv.innerHTML = `⏳ Сканирование...
                 <div style="margin-top: 8px;">
                     <div style="width:100%; height:20px; background:#e9ecef; border-radius:3px; overflow:hidden;">
-                        <div style="width:${data.progress}%; height:100%; background:#007bff; transition:width 0.3s; display:flex; align-items:center; justify-content:center;">
-                            <span style="color:white; font-size:11px; font-weight:bold;">${data.progress}%</span>
+                        <div style="width:${Number(data.progress)}%; height:100%; background:#007bff; transition:width 0.3s; display:flex; align-items:center; justify-content:center;">
+                            <span style="color:white; font-size:11px; font-weight:bold;">${Number(data.progress)}%</span>
                         </div>
                     </div>
                     <div style="font-size:12px; margin-top:4px; color:#666;">
-                        ${data.scanned_pages}/${data.total_pages} страниц | ${timeRemaining}
+                        ${Number(data.scanned_pages)}/${Number(data.total_pages)} страниц | ${esc(timeRemaining)}
                     </div>
-                </div>
-            `;
-
-            statusDiv.className = "status loading";
-            statusDiv.innerHTML = `⏳ Сканирование...${progressBar}`;
-            scanPollTimeout = setTimeout(() => pollScanStatus(scanId), 2000);
+                </div>`;
+            scanPollTimeout = setTimeout(() => pollScanStatus(token), 2000);
         } else if (data.status === "completed") {
             scanStartTime = null;
             statusDiv.className = "status success";
@@ -77,7 +69,7 @@ async function pollScanStatus(scanId) {
         } else {
             scanStartTime = null;
             statusDiv.className = "status error";
-            statusDiv.textContent = `✗ Ошибка при сканировании`;
+            statusDiv.textContent = "✗ Ошибка при сканировании";
             document.getElementById("scanBtn").disabled = false;
         }
     } catch (error) {
@@ -86,8 +78,7 @@ async function pollScanStatus(scanId) {
 }
 
 async function startScan() {
-    let siteUrl = document.getElementById("siteUrl").value.trim();
-    siteUrl = siteUrl.replace(/\/$/, "");  // удаляем trailing slash
+    const siteUrl = document.getElementById("siteUrl").value.trim().replace(/\/$/, "");
     if (!siteUrl) {
         alert("Укажи URL сайта");
         return;
@@ -103,7 +94,7 @@ async function startScan() {
     if (scanPollTimeout) clearTimeout(scanPollTimeout);
 
     try {
-        const response = await fetch(`${API_BASE}/scan`, {
+        const response = await fetch(`${API_BASE}/scan/`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ site_url: siteUrl })
@@ -115,23 +106,12 @@ async function startScan() {
         }
 
         const data = await response.json();
-        currentScanId = data.scan_id;
-        localStorage.setItem('lastScanId', currentScanId);
-        currentSiteUrl = siteUrl;
-        currentPage = 1;
+        currentScanToken = data.scan_token;
+        localStorage.setItem("scanToken", currentScanToken);
         selectedIds.clear();
 
-        // Если сканирование уже завершено (маловероятно), показываем результат
-        if (data.status === "completed") {
-            statusDiv.className = "status success";
-            statusDiv.textContent = `✓ Найдено ${data.count} изображений`;
-            btn.disabled = false;
-            loadGallery();
-        } else {
-            // Иначе начинаем polling
-            statusDiv.textContent = `⏳ Сканирование... (обрабатывается)`;
-            pollScanStatus(data.scan_id);
-        }
+        statusDiv.textContent = "⏳ Сканирование... (обрабатывается)";
+        pollScanStatus(currentScanToken);
     } catch (error) {
         statusDiv.className = "status error";
         statusDiv.textContent = `✗ ${error.message}`;
@@ -140,46 +120,43 @@ async function startScan() {
 }
 
 async function loadGallery() {
-    try {
-        const params = new URLSearchParams();
-        params.append('page', 1);
-        params.append('limit', 10000);  // загружаем все (без пагинации сейчас)
+    if (!currentScanToken) return;
 
-        if (currentScanId) params.append('scan_id', currentScanId);
-        if (filters.status) params.append('status', filters.status);
-        if (filters.page) params.append('page_url', filters.page);
+    try {
+        const params = new URLSearchParams({
+            scan_token: currentScanToken,
+            page: 1,
+            limit: 10000
+        });
 
         const response = await fetch(`${API_BASE}/images?${params}`);
         if (!response.ok) throw new Error(`Ошибка загрузки галереи: ${response.status}`);
 
-        const data = await response.json();
-        const items = data.items || [];
+        const items = (await response.json()).items || [];
 
-        // Группируем по image_url
-        const groupedImages = {};
+        // Одна картинка = одна карточка, страницы собираем в список
+        const grouped = {};
         items.forEach(img => {
-            if (!groupedImages[img.image_url]) {
-                groupedImages[img.image_url] = {
+            if (!grouped[img.image_url]) {
+                grouped[img.image_url] = {
                     ids: [],
                     image_url: img.image_url,
                     status: img.status,
                     pages: [],
-                    // Аудит данные
                     http_status: img.http_status,
                     file_size: img.file_size,
                     format: img.format,
-                    alt_text: img.alt_text,
                     copyright_score: img.copyright_score,
                     risk_details: img.risk_details
                 };
             }
-            groupedImages[img.image_url].ids.push(img.id);
-            if (!groupedImages[img.image_url].pages.includes(img.page_url)) {
-                groupedImages[img.image_url].pages.push(img.page_url);
+            grouped[img.image_url].ids.push(img.id);
+            if (!grouped[img.image_url].pages.includes(img.page_url)) {
+                grouped[img.image_url].pages.push(img.page_url);
             }
         });
 
-        allImages = Object.values(groupedImages);
+        allImages = Object.values(grouped);
         renderGallery();
     } catch (error) {
         console.error("Gallery error:", error);
@@ -196,60 +173,31 @@ function renderGallery() {
         return;
     }
 
+    const riskColor = { low: "#28a745", medium: "#ffc107", high: "#dc3545" };
+    const riskIcon = { low: "✅", medium: "⚠️", high: "🚫" };
+    const riskText = { low: "Низкий риск", medium: "Средний риск", high: "Высокий риск" };
+
     allImages.forEach(img => {
         const card = document.createElement("div");
         card.className = "card";
-        const firstId = img.ids[0];  // используем первый ID для галочки
-        if (selectedIds.has(firstId)) {
-            card.classList.add("selected");
-        }
 
-        const isSelected = selectedIds.has(firstId);
+        const isSelected = img.ids.some(id => selectedIds.has(id));
+        if (isSelected) card.classList.add("selected");
+
         const pagesHtml = img.pages.map(page =>
-            `<a href="${page}" target="_blank" style="display:block; margin:4px 0; font-size:11px; word-break:break-all;">${page}</a>`
+            `<a href="${esc(safeUrl(page))}" target="_blank" rel="noopener noreferrer"
+                style="display:block; margin:4px 0; font-size:11px; word-break:break-all;">${esc(page)}</a>`
         ).join("");
 
-        // Форматируем размер файла
-        const fileSizeText = img.file_size ?
-            (img.file_size > 1024*1024 ? (img.file_size/(1024*1024)).toFixed(1) + ' MB' :
-             img.file_size > 1024 ? (img.file_size/1024).toFixed(1) + ' KB' :
-             img.file_size + ' B') : '—';
+        const size = img.file_size;
+        const fileSizeText = size
+            ? (size > 1048576 ? (size / 1048576).toFixed(1) + " MB"
+                : size > 1024 ? (size / 1024).toFixed(1) + " KB"
+                    : size + " B")
+            : "—";
 
-        // Риск авторского права
-        const riskColor = {
-            'low': '#28a745',    // зелёный
-            'medium': '#ffc107',  // жёлтый
-            'high': '#dc3545'     // красный
-        };
-        const riskIcon = {
-            'low': '✅',
-            'medium': '⚠️',
-            'high': '🚫'
-        };
-        const riskText = {
-            'low': 'Низкий риск',
-            'medium': 'Средний риск',
-            'high': 'Высокий риск'
-        };
-
-        const riskScore = img.copyright_score || 'low';
-        const riskTooltip = img.risk_details ? img.risk_details.reason || '' : '';
-
-        // Аудит информация
-        const auditHtml = `
-            <div style="margin-top: 8px; background:#f5f5f5; padding:6px; border-radius:3px; font-size:12px;">
-                <div style="display:flex; justify-content:space-between; align-items:center;">
-                    <div><strong>🔍 Аудит:</strong></div>
-                    <div style="color:${riskColor[riskScore]}; font-weight:bold; cursor:help;" title="${riskTooltip}">
-                        ${riskIcon[riskScore]} ${riskText[riskScore]}
-                    </div>
-                </div>
-                <div>HTTP: <span style="color:${img.http_status === 200 ? '#28a745' : '#dc3545'}">${img.http_status || '—'}</span></div>
-                <div>Формат: ${img.format || '—'}</div>
-                <div>Размер: ${fileSizeText}</div>
-                ${img.alt_text ? `<div>Alt: <em>"${img.alt_text}"</em></div>` : ''}
-            </div>
-        `;
+        const riskScore = riskColor[img.copyright_score] ? img.copyright_score : "low";
+        const riskTooltip = img.risk_details ? (img.risk_details.reason || "") : "";
 
         card.innerHTML = `
             <div style="position: relative;">
@@ -257,13 +205,24 @@ function renderGallery() {
                      alt="preview"
                      class="card-image"
                      onerror="this.parentElement.parentElement.classList.add('broken')">
-                <input type="checkbox" class="card-checkbox" ${isSelected ? "checked" : ""}
-                       onchange="toggleSelectMultiple(${JSON.stringify(img.ids)}, this.checked)">
+                <input type="checkbox" class="card-checkbox" ${isSelected ? "checked" : ""}>
             </div>
             <div class="card-meta">
-                <div class="card-status ${img.status}">${img.status}</div>
-                <div class="url"><a href="${img.image_url}" target="_blank">🔗 Картинка</a></div>
-                ${auditHtml}
+                <div class="card-status ${esc(img.status)}">${esc(img.status)}</div>
+                <div class="url">
+                    <a href="${esc(safeUrl(img.image_url))}" target="_blank" rel="noopener noreferrer">🔗 Картинка</a>
+                </div>
+                <div style="margin-top: 8px; background:#f5f5f5; padding:6px; border-radius:3px; font-size:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div><strong>🔍 Аудит:</strong></div>
+                        <div style="color:${riskColor[riskScore]}; font-weight:bold; cursor:help;" title="${esc(riskTooltip)}">
+                            ${riskIcon[riskScore]} ${riskText[riskScore]}
+                        </div>
+                    </div>
+                    <div>HTTP: <span style="color:${img.http_status === 200 ? "#28a745" : "#dc3545"}">${esc(img.http_status || "—")}</span></div>
+                    <div>Формат: ${esc(img.format || "—")}</div>
+                    <div>Размер: ${esc(fileSizeText)}</div>
+                </div>
                 <details style="margin-top: 8px; color: #666; border-top:1px solid #eee; padding-top:8px;">
                     <summary style="cursor:pointer;"><strong>На страницах (${img.pages.length})</strong></summary>
                     ${pagesHtml}
@@ -271,9 +230,14 @@ function renderGallery() {
             </div>
         `;
 
+        const checkbox = card.querySelector(".card-checkbox");
+        checkbox.addEventListener("change", () => {
+            toggleSelectMultiple(img.ids, checkbox.checked);
+            card.classList.toggle("selected", checkbox.checked);
+        });
+
         card.addEventListener("click", (e) => {
             if (e.target.type !== "checkbox" && e.target.tagName !== "A" && !e.target.closest("details")) {
-                const checkbox = card.querySelector(".card-checkbox");
                 checkbox.checked = !checkbox.checked;
                 toggleSelectMultiple(img.ids, checkbox.checked);
                 card.classList.toggle("selected", checkbox.checked);
@@ -284,113 +248,17 @@ function renderGallery() {
     });
 }
 
-function renderPagination(total, pages) {
-    const pagination = document.getElementById("pagination");
-    pagination.innerHTML = "";
-
-    if (pages <= 1) return;
-
-    const prevBtn = document.createElement("button");
-    prevBtn.textContent = "← Предыдущая";
-    prevBtn.disabled = currentPage === 1;
-    prevBtn.onclick = () => {
-        if (currentPage > 1) {
-            currentPage--;
-            loadGallery();
-        }
-    };
-    pagination.appendChild(prevBtn);
-
-    for (let i = 1; i <= Math.min(pages, 5); i++) {
-        const btn = document.createElement("button");
-        btn.textContent = i;
-        btn.className = i === currentPage ? "active" : "";
-        btn.onclick = () => {
-            currentPage = i;
-            loadGallery();
-        };
-        pagination.appendChild(btn);
-    }
-
-    if (pages > 5) {
-        const dots = document.createElement("span");
-        dots.textContent = "...";
-        dots.style.padding = "0 5px";
-        pagination.appendChild(dots);
-    }
-
-    const nextBtn = document.createElement("button");
-    nextBtn.textContent = "Следующая →";
-    nextBtn.disabled = currentPage === pages;
-    nextBtn.onclick = () => {
-        if (currentPage < pages) {
-            currentPage++;
-            loadGallery();
-        }
-    };
-    pagination.appendChild(nextBtn);
-}
-
-function toggleSelect(id, checked) {
-    if (checked) {
-        selectedIds.add(id);
-    } else {
-        selectedIds.delete(id);
-    }
-}
-
 function toggleSelectMultiple(ids, checked) {
-    ids.forEach(id => {
-        if (checked) {
-            selectedIds.add(id);
-        } else {
-            selectedIds.delete(id);
-        }
-    });
+    ids.forEach(id => checked ? selectedIds.add(id) : selectedIds.delete(id));
 }
 
 function selectAll() {
-    allImages.forEach(img => {
-        img.ids.forEach(id => selectedIds.add(id));
-    });
+    allImages.forEach(img => img.ids.forEach(id => selectedIds.add(id)));
     renderGallery();
 }
 
-async function markAsKeep() {
-    if (selectedIds.size === 0) {
-        alert("Выбери изображения");
-        return;
-    }
-    await updateStatus(Array.from(selectedIds), "KEEP");
-}
-
-async function markAsDelete() {
-    if (selectedIds.size === 0) {
-        alert("Выбери изображения");
-        return;
-    }
-    await updateStatus(Array.from(selectedIds), "DELETE");
-}
-
-async function updateStatus(ids, status) {
-    try {
-        const response = await fetch(`${API_BASE}/images/status`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ids: Array.from(ids), status })
-        });
-
-        if (!response.ok) throw new Error("Ошибка обновления");
-
-        selectedIds.clear();
-        await loadGallery();
-    } catch (error) {
-        alert(`Ошибка: ${error.message}`);
-    }
-}
-
 function exportList() {
-    // Отмеченные картинки живут только в браузере — собираем файл здесь же
+    // Отмеченное живёт только в браузере — файл собираем здесь же
     const urls = allImages
         .filter(img => img.ids.some(id => selectedIds.has(id)))
         .map(img => img.image_url);
@@ -410,23 +278,3 @@ function exportList() {
     window.URL.revokeObjectURL(url);
     document.body.removeChild(a);
 }
-
-function applyFilters() {
-    filters.status = document.getElementById("statusFilter").value;
-    filters.page = document.getElementById("pageFilter").value;
-    currentPage = 1;
-    loadGallery();
-}
-
-function resetFilters() {
-    document.getElementById("statusFilter").value = "";
-    document.getElementById("pageFilter").value = "";
-    filters = { status: "", page: "" };
-    currentPage = 1;
-    loadGallery();
-}
-
-// Initial load
-window.addEventListener("load", () => {
-    console.log("App loaded");
-});

@@ -6,7 +6,7 @@ from ..scanner import scan_site_async
 from ..models import User, Project, Scan, ScanStatus
 from ..net_guard import check_public_url
 from .. import ratelimit
-import asyncio
+from datetime import datetime
 
 router = APIRouter()
 
@@ -17,12 +17,12 @@ class ScanRequest(BaseModel):
 
 class ScanResponse(BaseModel):
     count: int
-    scan_id: int
+    scan_token: str
     status: str
 
 
 class ScanStatusResponse(BaseModel):
-    id: int
+    token: str
     status: str
     total_images: int
     total_pages: int
@@ -30,15 +30,27 @@ class ScanStatusResponse(BaseModel):
     progress: int  # 0-100%
 
 
-async def _run_scan_background(scan_id: int, site_url: str, enable_seo: bool = False):
+def get_scan_by_token(token: str, db: Session) -> Scan:
+    """
+    Ищет скан по токену. Единственный способ добраться до скана снаружи:
+    инкрементный id перебирается и открывал бы чужие результаты.
+    """
+    scan = db.query(Scan).filter(Scan.token == token).first()
+    if not scan:
+        raise HTTPException(status_code=404, detail="Сканирование не найдено")
+    return scan
+
+
+async def _run_scan_background(scan_id: int, site_url: str):
     """Фоновое сканирование в отдельной сессии БД"""
     db = SessionLocal()
     try:
-        result = await scan_site_async(db, scan_id, site_url, enable_seo=enable_seo)
+        result = await scan_site_async(db, scan_id, site_url)
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan:
             scan.status = ScanStatus.completed
             scan.total_images = result["count"]
+            scan.completed_at = datetime.utcnow()
             db.commit()
     except Exception as e:
         # откат обязателен: после упавшего flush сессия не примет запись статуса
@@ -46,6 +58,7 @@ async def _run_scan_background(scan_id: int, site_url: str, enable_seo: bool = F
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan:
             scan.status = ScanStatus.failed
+            scan.completed_at = datetime.utcnow()
             db.commit()
         print(f"Ошибка при сканировании: {e}")
     finally:
@@ -68,8 +81,7 @@ async def start_scan(
         "site_url": "https://example.com"
     }
 
-    Очищает старые данные для этого сайта и сканирует его заново.
-    Возвращает количество найденных изображений и scan_id.
+    Возвращает scan_token — по нему потом читается прогресс и галерея.
     """
     try:
         check_public_url(request.site_url)
@@ -110,23 +122,24 @@ async def start_scan(
         # Запускаем сканирование в фоне
         background_tasks.add_task(_run_scan_background, scan.id, request.site_url)
 
-        return ScanResponse(count=0, scan_id=scan.id, status="running")
+        return ScanResponse(count=0, scan_token=scan.token, status="running")
+    except HTTPException:
+        ratelimit.release()
+        raise
     except Exception as e:
         # фоновая задача не стартует — слот освобождаем здесь, иначе он утечёт
         ratelimit.release()
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/{scan_id}")
-async def get_scan_status(scan_id: int, db: Session = Depends(get_db)):
+@router.get("/{token}")
+async def get_scan_status(token: str, db: Session = Depends(get_db)):
     """
     Получить статус сканирования с прогрессом.
 
-    GET /api/scans/123
+    GET /api/scan/{token}
     """
-    scan = db.query(Scan).filter(Scan.id == scan_id).first()
-    if not scan:
-        raise HTTPException(status_code=404, detail="Сканирование не найдено")
+    scan = get_scan_by_token(token, db)
 
     # Рассчитываем прогресс
     progress = 0
@@ -134,7 +147,7 @@ async def get_scan_status(scan_id: int, db: Session = Depends(get_db)):
         progress = min(100, int((scan.scanned_pages or 0) * 100 / scan.total_pages))
 
     return ScanStatusResponse(
-        id=scan.id,
+        token=scan.token,
         status=scan.status.value,
         total_images=scan.total_images or 0,
         total_pages=scan.total_pages or 0,
