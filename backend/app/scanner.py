@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from urllib.parse import urljoin, urlparse
@@ -22,6 +23,21 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ImageAuditBot/1.0)"}
 PAGE_TIMEOUT = 15.0
 MAX_SITEMAP_BYTES = 10 * 1024 * 1024
 BATCH_SIZE = 5
+
+# Фоны из подключённых стилей. Файлы одни и те же на всех страницах,
+# поэтому каждый забираем ровно один раз за скан.
+MAX_STYLESHEETS = 50
+MAX_CSS_BYTES = 2 * 1024 * 1024
+CSS_URL_RE = re.compile(r"""url\(\s*(['"]?)([^'")]+)\1\s*\)""", re.I)
+FONT_FACE_RE = re.compile(r"""@font-face\s*\{[^}]*\}""", re.I)
+
+# В url() лежат не только картинки, но и шрифты — их в результат не пускаем
+IMAGE_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".avif", ".bmp", ".ico")
+
+
+def _looks_like_image(url: str) -> bool:
+    path = url.split("?")[0].split("#")[0].lower()
+    return path.endswith(IMAGE_EXT)
 
 
 def _is_scannable(url: str) -> bool:
@@ -115,6 +131,43 @@ async def crawl_internal_links(base_url: str, max_pages: int = 100) -> list:
     return sorted(visited)
 
 
+def _stylesheets_from_html(page_url: str, html: str) -> list:
+    """Ссылки на подключённые таблицы стилей."""
+    soup = BeautifulSoup(html, "html.parser")
+    out = set()
+    for link in soup.find_all("link", href=True):
+        rel = [r.lower() for r in (link.get("rel") or [])]
+        if "stylesheet" in rel:
+            out.add(urljoin(page_url, link["href"]))
+    return sorted(out)
+
+
+async def images_from_stylesheet(client: httpx.AsyncClient, css_url: str) -> list:
+    """Картинки, на которые ссылается файл стилей."""
+    try:
+        r = await client.get(css_url)
+        if r.status_code != 200 or len(r.content) > MAX_CSS_BYTES:
+            return []
+    except Exception:
+        return []
+
+    # Шрифты объявляются в @font-face и бывают в .svg — по расширению
+    # их от картинок не отличить, поэтому вырезаем блок целиком.
+    css = FONT_FACE_RE.sub("", r.text)
+
+    found = set()
+    for _, ref in CSS_URL_RE.findall(css):
+        ref = ref.strip()
+        if not ref or ref.startswith("data:"):
+            continue
+        # url() отсчитывается от самого файла стилей, а не от страницы
+        absolute = urljoin(css_url, ref)
+        if _looks_like_image(absolute):
+            found.add(absolute)
+
+    return sorted(found)
+
+
 def _images_from_html(page_url: str, html: str) -> list:
     """Достаёт абсолютные URL картинок из HTML страницы."""
     soup = BeautifulSoup(html, "html.parser")
@@ -146,17 +199,17 @@ def _images_from_html(page_url: str, html: str) -> list:
     return sorted(images)
 
 
-async def extract_images_async(page_url: str) -> list:
-    """Загружает страницу и возвращает найденные на ней картинки."""
+async def extract_images_async(page_url: str):
+    """Загружает страницу и возвращает её картинки и ссылки на стили."""
     try:
         async with httpx.AsyncClient(timeout=PAGE_TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
             r = await client.get(page_url)
             if r.status_code != 200:
-                return []
+                return [], []
     except Exception:
-        return []
+        return [], []
 
-    return _images_from_html(page_url, r.text)
+    return _images_from_html(page_url, r.text), _stylesheets_from_html(page_url, r.text)
 
 
 async def audit_image(img_url: str) -> dict:
@@ -187,10 +240,14 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
         db.commit()
 
     count = 0
+    stylesheets = set()
 
     async def process_page(page: str):
         try:
-            imgs = [u for u in await extract_images_async(page) if _is_scannable(u)]
+            found, sheets = await extract_images_async(page)
+            stylesheets.update(s for s in sheets if _is_scannable(s))
+
+            imgs = [u for u in found if _is_scannable(u)]
             if not imgs:
                 return page, []
             results = await asyncio.gather(*(audit_image(u) for u in imgs), return_exceptions=True)
@@ -235,6 +292,55 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
             scan.scanned_pages = min(start + BATCH_SIZE, len(pages))
         db.commit()
 
+    # Фоны из подключённых стилей. Файлы одни и те же на всех страницах,
+    # поэтому обрабатываем каждый один раз: это доли секунды на весь скан.
+    # page_url ставим равным адресу файла стилей — так видно, где фон объявлен.
+    sheets = sorted(stylesheets)[:MAX_STYLESHEETS]
+    if sheets:
+        print(f"Разбираю {len(sheets)} файлов стилей...")
+        async with httpx.AsyncClient(timeout=PAGE_TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
+            per_sheet = await asyncio.gather(
+                *(images_from_stylesheet(client, url) for url in sheets),
+                return_exceptions=True,
+            )
+
+        seen = set()
+        tasks = []
+        for css_url, urls in zip(sheets, per_sheet):
+            if isinstance(urls, BaseException):
+                continue
+            for img_url in urls:
+                if img_url in seen or not _is_scannable(img_url):
+                    continue
+                seen.add(img_url)
+                tasks.append((css_url, img_url))
+
+        results = await asyncio.gather(*(audit_image(u) for _, u in tasks), return_exceptions=True)
+        css_count = 0
+        for (css_url, _), img in zip(tasks, results):
+            if isinstance(img, BaseException):
+                continue
+            db.add(Image(
+                scan_id=scan_id,
+                image_url=img["url"],
+                page_url=css_url,
+                status="NEW",
+                http_status=img["tech"].get("http_status"),
+                file_size=img["tech"].get("file_size"),
+                format=img["tech"].get("format"),
+                width=img["tech"].get("width"),
+                height=img["tech"].get("height"),
+                exif_data=img["copyright"].get("exif_data"),
+                copyright_score=img["copyright"].get("copyright_score"),
+                risk_details=img["copyright"].get("risk_details"),
+                created_at=datetime.utcnow(),
+                last_seen_at=datetime.utcnow(),
+            ))
+            count += 1
+            css_count += 1
+        db.commit()
+        print(f"Из стилей добавлено {css_count} картинок")
+
     # Считаем уникальные картинки: строка заводится на каждое размещение,
     # а в галерее сквозной логотип — одна карточка, а не сотня.
     unique = (
@@ -278,6 +384,31 @@ def demo():
         "https://s.test/a.png", "https://s.test/b.png",
         "https://s.test/c.webp", "https://s.test/e.jpg",
     ], found
+
+    # url() во всех трёх формах записи, пути считаются от файла стилей
+    css = (
+        "a{background:url('img/a.png')}"
+        'b{background-image:url("/b.jpg?v=2")}'
+        "c{background:url(../c.gif)}"
+        "@font-face{src:url('/fonts/x.woff2')}"
+        "d{background:url(data:image/png;base64,AAAA)}"
+    )
+    refs = [urljoin("https://s.test/css/style.css", m[1]) for m in CSS_URL_RE.findall(css)]
+    images = sorted(r for r in refs if _looks_like_image(r) and not r.startswith("data:"))
+    assert images == [
+        "https://s.test/b.jpg?v=2",
+        "https://s.test/c.gif",
+        "https://s.test/css/img/a.png",
+    ], images
+
+    # @font-face вырезается целиком, включая шрифты в формате svg
+    fonts = "@font-face{font-family:M;src:url('/f/M.svg#M') format('svg'),url('/f/M.woff2')}"
+    assert FONT_FACE_RE.sub("", fonts) == "", FONT_FACE_RE.sub("", fonts)
+    assert not CSS_URL_RE.findall(FONT_FACE_RE.sub("", fonts + "x{background:url(/bg.png)}"))[0][1].endswith(".svg")
+
+    # шрифты и data-URI в результат не попадают
+    assert not _looks_like_image("https://s.test/fonts/x.woff2")
+    assert _looks_like_image("https://s.test/a.PNG?ver=1")
 
     print("scanner: ok")
 
