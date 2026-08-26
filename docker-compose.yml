@@ -8,8 +8,9 @@ services:
       POSTGRES_DB: ${DB_NAME:-image_audit}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:5432:5432"
+    # Порт наружу не пробрасываем: приложение ходит в базу по внутренней сети
+    # Docker, а на хосте 5432 нередко уже занят системным postgres.
+    # Для ручных запросов есть docker compose exec db psql -U postgres
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
