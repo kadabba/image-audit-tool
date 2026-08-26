@@ -371,7 +371,8 @@ function sortImages(list) {
         const bad = x => (x.http_status === 200 ? 1 : 0);
         copy.sort((a, b) => bad(a) - bad(b) || (a.http_status ?? 999) - (b.http_status ?? 999));
     } else {
-        copy.sort((a, b) => a.image_url.localeCompare(b.image_url));
+        // Чем больше страниц, тем опаснее удалять: сквозные наверх
+        copy.sort((a, b) => b.pages_total - a.pages_total || (b.file_size ?? 0) - (a.file_size ?? 0));
     }
     return copy;
 }
