@@ -81,10 +81,22 @@ function renderHistory() {
     if (!list.length) return;
 
     menu.innerHTML = list.map(e => {
-        const expired = e.expired === true;
+        // Срок хранения короткий, поэтому важнее, когда скан пропадёт,
+        // а не когда он был снят
+        const gone = e.expiresAt && new Date(e.expiresAt) <= new Date();
+        const expired = e.expired === true || gone;
+
         const parts = [];
-        if (e.images != null) parts.push(`${e.images} картинок`);
-        parts.push(expired ? "срок истёк" : formatDate(e.savedAt));
+        if (e.images != null) {
+            parts.push(`${e.images} ${plural(e.images, "картинка", "картинки", "картинок")}`);
+        }
+        if (expired) {
+            parts.push("удалён");
+        } else if (e.expiresAt) {
+            parts.push(`удалится ${formatDate(e.expiresAt)}`);
+        } else {
+            parts.push(formatDate(e.savedAt));
+        }
         return `<button class="history-item" data-token="${esc(e.token)}" ${expired ? "disabled" : ""}>
                     <span class="site">${esc(e.site || "без адреса")}</span>
                     <span class="meta">${esc(parts.join(" · "))}</span>
