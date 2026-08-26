@@ -179,7 +179,6 @@ backend/app/
   routes/            scan, gallery, export, proxy
 frontend/            статика: галерея на ванильном JS
 remove-images.php    готовый скрипт удаления для WordPress (необязателен)
-image_audit.py       предшественник: standalone-скрипт, генерирует HTML-отчёт
 ```
 
 ## Объём базы
