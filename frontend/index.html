@@ -3,33 +3,118 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Audit Tool</title>
+    <title>Image Audit Tool — аудит изображений сайта</title>
+    <meta name="description" content="Найдите битые ссылки, забытые дубли и стоковые фото без лицензии на своём сайте. Обход всего сайта за минуты, без регистрации.">
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>Image Audit Tool</h1>
-            <p>Визуальный отбор изображений для удаления</p>
-        </header>
-
-        <div class="controls">
-            <div class="scan-section">
-                <label for="siteUrl">URL сайта:</label>
-                <input type="text" id="siteUrl" placeholder="https://example.com" value="">
-                <button id="scanBtn" onclick="startScan()">Сканировать</button>
-                <div id="scanStatus" class="status"></div>
-            </div>
-
-<div class="action-section">
-                <button onclick="selectAll()">Выбрать все</button>
-                <button onclick="exportList()">Скачать список</button>
+    <header class="topbar">
+        <a class="brand" href="/">
+            <span class="brand-mark">◧</span>
+            <span>Image Audit</span>
+        </a>
+        <div class="topbar-actions">
+            <div class="history-wrap" id="historyWrap" hidden>
+                <button class="btn btn-ghost" id="historyBtn" aria-expanded="false">
+                    Мои сканы <span class="caret">▾</span>
+                </button>
+                <div class="history-menu" id="historyMenu" hidden></div>
             </div>
         </div>
+    </header>
 
-        <div id="gallery" class="gallery"></div>
-        <div id="pagination" class="pagination"></div>
-    </div>
+    <main>
+        <!-- Маркетинговый блок: сворачивается, как только появились результаты -->
+        <section class="hero" id="hero">
+            <h1>Узнайте, какие картинки на сайте можно удалить —<br>и какие опасно оставить</h1>
+            <p class="lead">
+                Битые ссылки, забытые дубли из старых версий страниц и стоковые фото
+                без лицензии. Обход всего сайта за минуты, без регистрации.
+            </p>
+        </section>
+
+        <section class="scan-panel" id="scanPanel">
+            <form class="scan-form" id="scanForm" autocomplete="off">
+                <input type="url" id="siteUrl" placeholder="https://example.com" required
+                       aria-label="Адрес сайта">
+                <button type="submit" class="btn btn-primary" id="scanBtn">Сканировать</button>
+            </form>
+            <div id="scanStatus" class="status" hidden></div>
+        </section>
+
+        <section class="features" id="features">
+            <h2 class="section-title">Что проверяем</h2>
+            <div class="grid">
+                <article class="tile">
+                    <div class="tile-icon">🔗</div>
+                    <h3>Битые ссылки</h3>
+                    <p>HTTP-статус каждого файла: сразу видно 404 и закрытые доступом 403.</p>
+                </article>
+                <article class="tile">
+                    <div class="tile-icon">⚖️</div>
+                    <h3>Авторские права</h3>
+                    <p>Разбираем EXIF и ищем следы фотобанков — Getty, Shutterstock, 123RF.</p>
+                </article>
+                <article class="tile">
+                    <div class="tile-icon">🐘</div>
+                    <h3>Тяжёлые файлы</h3>
+                    <p>Вес, формат и размеры в пикселях. Находит неоптимизированные картинки.</p>
+                </article>
+                <article class="tile">
+                    <div class="tile-icon">🗂️</div>
+                    <h3>Где используется</h3>
+                    <p>Список всех страниц для каждой картинки. Видно, что сломается при удалении.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="steps" id="steps">
+            <h2 class="section-title">Как это работает</h2>
+            <ol class="grid grid-3">
+                <li class="step">
+                    <span class="step-num">1</span>
+                    <h3>Вводите адрес</h3>
+                    <p>Читаем <code>sitemap.xml</code>, а если его нет — обходим по внутренним ссылкам.</p>
+                </li>
+                <li class="step">
+                    <span class="step-num">2</span>
+                    <h3>Отмечаете лишнее</h3>
+                    <p>Галерея с превью, статусами и оценкой риска. Прогресс виден в реальном времени.</p>
+                </li>
+                <li class="step">
+                    <span class="step-num">3</span>
+                    <h3>Скачиваете список</h3>
+                    <p>Текстовый файл со ссылками — готовый вход для массового удаления через WP-CLI.</p>
+                </li>
+            </ol>
+            <p class="note">
+                Сервис ничего не удаляет на сайте сам — только показывает и отдаёт список.
+                Решение остаётся за вами.
+            </p>
+        </section>
+
+        <section class="results" id="results" hidden>
+            <div class="results-bar">
+                <div class="results-info">
+                    <strong id="resultsCount">—</strong>
+                    <span id="resultsSite" class="muted"></span>
+                    <span id="resultsExpiry" class="expiry"></span>
+                </div>
+                <div class="results-actions">
+                    <button class="btn btn-ghost" onclick="selectAll()">Выбрать все</button>
+                    <button class="btn btn-ghost" id="shareBtn">Поделиться</button>
+                    <button class="btn btn-primary" onclick="exportList()">Скачать список</button>
+                </div>
+            </div>
+            <div id="shareHint" class="share-hint" hidden></div>
+            <div id="gallery" class="gallery"></div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <span>Image Audit Tool</span>
+        <a href="https://github.com/kadabba/image-audit-tool" target="_blank" rel="noopener noreferrer">Исходный код</a>
+    </footer>
 
     <script src="/static/app.js"></script>
 </body>

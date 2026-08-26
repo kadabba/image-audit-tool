@@ -1,12 +1,16 @@
 const API_BASE = "/api";
+const HISTORY_KEY = "scanHistory";
+const HISTORY_LIMIT = 20;
+
 let selectedIds = new Set();
 let allImages = [];
 let currentScanToken = null;
 let scanPollTimeout = null;
 let scanStartTime = null;
 
-// Данные приходят со сканируемых сайтов, то есть от постороннего.
-// Без экранирования кавычка в URL закрывает атрибут и даёт выполнение чужого кода.
+/* ---------- Безопасность вывода ----------
+   Данные приходят со сканируемых сайтов, то есть от постороннего.
+   Без экранирования кавычка в URL закрывает атрибут и даёт выполнение чужого кода. */
 function esc(value) {
     return String(value ?? "").replace(/[&<>"']/g, c => ({
         "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -23,10 +27,174 @@ function safeUrl(value) {
     }
 }
 
+/* ---------- История сканов ----------
+   Живёт только в этом браузере: без аккаунтов синхронизировать негде. */
+function loadHistory() {
+    try {
+        const raw = JSON.parse(localStorage.getItem(HISTORY_KEY));
+        return Array.isArray(raw) ? raw : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveHistory(list) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(0, HISTORY_LIMIT)));
+}
+
+function rememberScan(entry) {
+    const list = loadHistory().filter(e => e.token !== entry.token);
+    list.unshift({ ...entry, savedAt: Date.now() });
+    saveHistory(list);
+    renderHistory();
+}
+
+function updateScanInHistory(token, patch) {
+    const list = loadHistory();
+    const item = list.find(e => e.token === token);
+    if (!item) return;
+    Object.assign(item, patch);
+    saveHistory(list);
+    renderHistory();
+}
+
+function forgetScan(token) {
+    saveHistory(loadHistory().filter(e => e.token !== token));
+    renderHistory();
+}
+
+function formatDate(value) {
+    const d = new Date(value);
+    return isNaN(d) ? "" : d.toLocaleString("ru-RU", {
+        day: "numeric", month: "long", hour: "2-digit", minute: "2-digit"
+    });
+}
+
+function renderHistory() {
+    const list = loadHistory();
+    const wrap = document.getElementById("historyWrap");
+    const menu = document.getElementById("historyMenu");
+
+    wrap.hidden = list.length === 0;
+    if (!list.length) return;
+
+    menu.innerHTML = list.map(e => {
+        const expired = e.expired === true;
+        const parts = [];
+        if (e.images != null) parts.push(`${e.images} картинок`);
+        parts.push(expired ? "срок истёк" : formatDate(e.savedAt));
+        return `<button class="history-item" data-token="${esc(e.token)}" ${expired ? "disabled" : ""}>
+                    <span class="site">${esc(e.site || "без адреса")}</span>
+                    <span class="meta">${esc(parts.join(" · "))}</span>
+                </button>`;
+    }).join("");
+
+    menu.querySelectorAll(".history-item:not([disabled])").forEach(btn => {
+        btn.addEventListener("click", () => {
+            menu.hidden = true;
+            document.getElementById("historyBtn").setAttribute("aria-expanded", "false");
+            openScan(btn.dataset.token);
+        });
+    });
+}
+
+/* ---------- Загрузка ---------- */
 window.addEventListener("load", () => {
-    currentScanToken = localStorage.getItem("scanToken");
-    if (currentScanToken) loadGallery();
+    renderHistory();
+    wireControls();
+
+    // Ссылка, которой поделились, важнее сохранённого в браузере скана
+    const shared = new URLSearchParams(window.location.search).get("scan");
+    const token = shared || loadHistory()[0]?.token;
+    if (token) openScan(token, { fromShare: Boolean(shared) });
 });
+
+function wireControls() {
+    document.getElementById("scanForm").addEventListener("submit", e => {
+        e.preventDefault();
+        startScan();
+    });
+
+    document.getElementById("shareBtn").addEventListener("click", shareScan);
+
+    const btn = document.getElementById("historyBtn");
+    const menu = document.getElementById("historyMenu");
+    btn.addEventListener("click", e => {
+        e.stopPropagation();
+        const open = menu.hidden;
+        menu.hidden = !open;
+        btn.setAttribute("aria-expanded", String(open));
+    });
+    document.addEventListener("click", () => {
+        menu.hidden = true;
+        btn.setAttribute("aria-expanded", "false");
+    });
+    menu.addEventListener("click", e => e.stopPropagation());
+}
+
+async function openScan(token, { fromShare = false } = {}) {
+    currentScanToken = token;
+    selectedIds.clear();
+
+    try {
+        const response = await fetch(`${API_BASE}/scan/${encodeURIComponent(token)}`);
+
+        // 404 — скан удалён по истечении срока хранения
+        if (response.status === 404) {
+            updateScanInHistory(token, { expired: true });
+            if (fromShare) {
+                showStatus("error", "Срок хранения этого скана истёк — данные удалены.");
+            }
+            currentScanToken = null;
+            return;
+        }
+        if (!response.ok) return;
+
+        const data = await response.json();
+        rememberScan({ token, site: data.site_url, images: data.total_images, expiresAt: data.expires_at });
+
+        if (data.status === "running") {
+            document.getElementById("scanBtn").disabled = true;
+            pollScanStatus(token);
+        } else if (data.status === "completed") {
+            showResults(data);
+            await loadGallery();
+        } else {
+            showStatus("error", "Это сканирование завершилось с ошибкой.");
+        }
+    } catch (error) {
+        console.error("openScan:", error);
+    }
+}
+
+/* ---------- Сканирование ---------- */
+function showStatus(kind, html) {
+    const el = document.getElementById("scanStatus");
+    el.hidden = false;
+    el.className = `status ${kind}`;
+    el.innerHTML = html;
+}
+
+function showResults(data) {
+    document.body.classList.add("has-results");
+    document.getElementById("results").hidden = false;
+    document.getElementById("scanStatus").hidden = true;
+    document.getElementById("scanBtn").disabled = false;
+
+    document.getElementById("resultsCount").textContent =
+        `${data.total_images} ${plural(data.total_images, "картинка", "картинки", "картинок")}`;
+    document.getElementById("resultsSite").textContent = data.site_url || "";
+
+    const expiry = document.getElementById("resultsExpiry");
+    expiry.textContent = data.expires_at ? `удалится ${formatDate(data.expires_at)}` : "";
+}
+
+function plural(n, one, few, many) {
+    const m10 = n % 10, m100 = n % 100;
+    if (m10 === 1 && m100 !== 11) return one;
+    if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few;
+    return many;
+}
 
 async function pollScanStatus(token) {
     try {
@@ -34,42 +202,37 @@ async function pollScanStatus(token) {
         if (!response.ok) return;
 
         const data = await response.json();
-        const statusDiv = document.getElementById("scanStatus");
 
         if (data.status === "running") {
             if (!scanStartTime) scanStartTime = Date.now();
             const elapsed = (Date.now() - scanStartTime) / 1000;
-            let timeRemaining = "...";
+            let remaining = "оцениваем...";
 
             if (data.progress > 5 && elapsed > 10) {
-                const remainingSecs = Math.round((elapsed / data.progress) * (100 - data.progress));
-                const mins = Math.ceil(remainingSecs / 60);
-                timeRemaining = mins > 0 ? `~${mins} мин` : "<1 мин";
+                const secs = Math.round((elapsed / data.progress) * (100 - data.progress));
+                const mins = Math.ceil(secs / 60);
+                remaining = mins > 0 ? `осталось ~${mins} мин` : "меньше минуты";
             }
 
-            statusDiv.className = "status loading";
-            statusDiv.innerHTML = `⏳ Сканирование...
-                <div style="margin-top: 8px;">
-                    <div style="width:100%; height:20px; background:#e9ecef; border-radius:3px; overflow:hidden;">
-                        <div style="width:${Number(data.progress)}%; height:100%; background:#007bff; transition:width 0.3s; display:flex; align-items:center; justify-content:center;">
-                            <span style="color:white; font-size:11px; font-weight:bold;">${Number(data.progress)}%</span>
-                        </div>
-                    </div>
-                    <div style="font-size:12px; margin-top:4px; color:#666;">
-                        ${Number(data.scanned_pages)}/${Number(data.total_pages)} страниц | ${esc(timeRemaining)}
-                    </div>
-                </div>`;
+            showStatus("loading", `
+                <div>Сканируем ${esc(data.site_url || "сайт")}</div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:${Number(data.progress)}%"></div>
+                </div>
+                <div class="progress-meta">
+                    <span>${Number(data.scanned_pages)} из ${Number(data.total_pages)} страниц</span>
+                    <span>${esc(remaining)}</span>
+                </div>`);
+
             scanPollTimeout = setTimeout(() => pollScanStatus(token), 2000);
         } else if (data.status === "completed") {
             scanStartTime = null;
-            statusDiv.className = "status success";
-            statusDiv.textContent = `✓ Найдено ${data.total_images} изображений`;
-            document.getElementById("scanBtn").disabled = false;
+            updateScanInHistory(token, { images: data.total_images, expiresAt: data.expires_at });
+            showResults(data);
             loadGallery();
         } else {
             scanStartTime = null;
-            statusDiv.className = "status error";
-            statusDiv.textContent = "✗ Ошибка при сканировании";
+            showStatus("error", "Сканирование завершилось с ошибкой.");
             document.getElementById("scanBtn").disabled = false;
         }
     } catch (error) {
@@ -79,19 +242,17 @@ async function pollScanStatus(token) {
 
 async function startScan() {
     const siteUrl = document.getElementById("siteUrl").value.trim().replace(/\/$/, "");
-    if (!siteUrl) {
-        alert("Укажи URL сайта");
-        return;
-    }
+    if (!siteUrl) return;
 
-    const statusDiv = document.getElementById("scanStatus");
     const btn = document.getElementById("scanBtn");
-
     btn.disabled = true;
-    statusDiv.className = "status loading";
-    statusDiv.textContent = "Сканирование...";
+    showStatus("loading", "Ищем карту сайта...");
 
     if (scanPollTimeout) clearTimeout(scanPollTimeout);
+    scanStartTime = null;
+    selectedIds.clear();
+    document.getElementById("results").hidden = true;
+    document.getElementById("shareHint").hidden = true;
 
     try {
         const response = await fetch(`${API_BASE}/scan/`, {
@@ -102,33 +263,52 @@ async function startScan() {
 
         if (!response.ok) {
             const detail = await response.json().then(d => d.detail).catch(() => null);
-            throw new Error(detail || `Ошибка: ${response.status}`);
+            throw new Error(detail || `Ошибка ${response.status}`);
         }
 
         const data = await response.json();
         currentScanToken = data.scan_token;
-        localStorage.setItem("scanToken", currentScanToken);
-        selectedIds.clear();
+        rememberScan({ token: currentScanToken, site: siteUrl });
 
-        statusDiv.textContent = "⏳ Сканирование... (обрабатывается)";
+        // Адрес в строке браузера — уже готовая ссылка, которой можно поделиться
+        history.replaceState(null, "", `?scan=${encodeURIComponent(currentScanToken)}`);
         pollScanStatus(currentScanToken);
     } catch (error) {
-        statusDiv.className = "status error";
-        statusDiv.textContent = `✗ ${error.message}`;
+        showStatus("error", esc(error.message));
         btn.disabled = false;
     }
 }
 
+/* ---------- Поделиться ---------- */
+async function shareScan() {
+    if (!currentScanToken) return;
+
+    const url = `${window.location.origin}/?scan=${encodeURIComponent(currentScanToken)}`;
+    const entry = loadHistory().find(e => e.token === currentScanToken);
+    const until = entry?.expiresAt ? ` Действует до ${formatDate(entry.expiresAt)}.` : "";
+
+    let copied = true;
+    try {
+        await navigator.clipboard.writeText(url);
+    } catch {
+        copied = false;  // нет доступа к буферу (не https или отказ) — показываем ссылку целиком
+    }
+
+    const hint = document.getElementById("shareHint");
+    hint.hidden = false;
+    hint.innerHTML = copied
+        ? `<strong>Ссылка скопирована.</strong>${esc(until)}
+           <span class="warn">Открыть скан сможет любой, у кого есть эта ссылка.</span>`
+        : `<strong>Скопируйте ссылку:</strong> <code>${esc(url)}</code>${esc(until)}
+           <span class="warn">Открыть скан сможет любой, у кого есть эта ссылка.</span>`;
+}
+
+/* ---------- Галерея ---------- */
 async function loadGallery() {
     if (!currentScanToken) return;
 
     try {
-        const params = new URLSearchParams({
-            scan_token: currentScanToken,
-            page: 1,
-            limit: 10000
-        });
-
+        const params = new URLSearchParams({ scan_token: currentScanToken, page: 1, limit: 10000 });
         const response = await fetch(`${API_BASE}/images?${params}`);
         if (!response.ok) throw new Error(`Ошибка загрузки галереи: ${response.status}`);
 
@@ -139,10 +319,9 @@ async function loadGallery() {
         items.forEach(img => {
             if (!grouped[img.image_url]) {
                 grouped[img.image_url] = {
-                    ids: [],
+                    ids: [], pages: [],
                     image_url: img.image_url,
                     status: img.status,
-                    pages: [],
                     http_status: img.http_status,
                     file_size: img.file_size,
                     format: img.format,
@@ -160,20 +339,25 @@ async function loadGallery() {
         renderGallery();
     } catch (error) {
         console.error("Gallery error:", error);
-        alert(`Ошибка: ${error.message}`);
     }
+}
+
+function formatSize(size) {
+    if (!size) return "—";
+    if (size > 1048576) return (size / 1048576).toFixed(1) + " MB";
+    if (size > 1024) return (size / 1024).toFixed(1) + " KB";
+    return size + " B";
 }
 
 function renderGallery() {
     const gallery = document.getElementById("gallery");
     gallery.innerHTML = "";
 
-    if (allImages.length === 0) {
-        gallery.innerHTML = "<p style='text-align:center; padding:40px;'>Нет изображений</p>";
+    if (!allImages.length) {
+        gallery.innerHTML = '<p class="empty">Изображений не найдено</p>';
         return;
     }
 
-    const riskColor = { low: "#28a745", medium: "#ffc107", high: "#dc3545" };
     const riskIcon = { low: "✅", medium: "⚠️", high: "🚫" };
     const riskText = { low: "Низкий риск", medium: "Средний риск", high: "Высокий риск" };
 
@@ -184,64 +368,52 @@ function renderGallery() {
         const isSelected = img.ids.some(id => selectedIds.has(id));
         if (isSelected) card.classList.add("selected");
 
-        const pagesHtml = img.pages.map(page =>
-            `<a href="${esc(safeUrl(page))}" target="_blank" rel="noopener noreferrer"
-                style="display:block; margin:4px 0; font-size:11px; word-break:break-all;">${esc(page)}</a>`
+        const risk = riskText[img.copyright_score] ? img.copyright_score : "low";
+        const tooltip = img.risk_details?.reason || "";
+
+        const pagesHtml = img.pages.map(p =>
+            `<a href="${esc(safeUrl(p))}" target="_blank" rel="noopener noreferrer">${esc(p)}</a>`
         ).join("");
 
-        const size = img.file_size;
-        const fileSizeText = size
-            ? (size > 1048576 ? (size / 1048576).toFixed(1) + " MB"
-                : size > 1024 ? (size / 1024).toFixed(1) + " KB"
-                    : size + " B")
-            : "—";
-
-        const riskScore = riskColor[img.copyright_score] ? img.copyright_score : "low";
-        const riskTooltip = img.risk_details ? (img.risk_details.reason || "") : "";
-
         card.innerHTML = `
-            <div style="position: relative;">
-                <img src="/api/image?url=${encodeURIComponent(img.image_url)}"
-                     alt="preview"
-                     class="card-image"
-                     onerror="this.parentElement.parentElement.classList.add('broken')">
-                <input type="checkbox" class="card-checkbox" ${isSelected ? "checked" : ""}>
+            <div class="card-thumb">
+                <img src="/api/image?url=${encodeURIComponent(img.image_url)}" alt="" class="card-image"
+                     loading="lazy" onerror="this.closest('.card').classList.add('broken')">
+                <input type="checkbox" class="card-checkbox" ${isSelected ? "checked" : ""}
+                       aria-label="Отметить изображение">
             </div>
             <div class="card-meta">
-                <div class="card-status ${esc(img.status)}">${esc(img.status)}</div>
-                <div class="url">
-                    <a href="${esc(safeUrl(img.image_url))}" target="_blank" rel="noopener noreferrer">🔗 Картинка</a>
+                <div class="card-row">
+                    <span class="badge ${esc(img.status)}">${esc(img.status)}</span>
+                    <span class="risk risk-${risk}" title="${esc(tooltip)}">${riskIcon[risk]} ${riskText[risk]}</span>
                 </div>
-                <div style="margin-top: 8px; background:#f5f5f5; padding:6px; border-radius:3px; font-size:12px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <div><strong>🔍 Аудит:</strong></div>
-                        <div style="color:${riskColor[riskScore]}; font-weight:bold; cursor:help;" title="${esc(riskTooltip)}">
-                            ${riskIcon[riskScore]} ${riskText[riskScore]}
-                        </div>
-                    </div>
-                    <div>HTTP: <span style="color:${img.http_status === 200 ? "#28a745" : "#dc3545"}">${esc(img.http_status || "—")}</span></div>
-                    <div>Формат: ${esc(img.format || "—")}</div>
-                    <div>Размер: ${esc(fileSizeText)}</div>
+                <div class="card-row">
+                    <span>HTTP</span>
+                    <span class="${img.http_status === 200 ? "status-ok" : "status-bad"}">${esc(img.http_status || "—")}</span>
                 </div>
-                <details style="margin-top: 8px; color: #666; border-top:1px solid #eee; padding-top:8px;">
-                    <summary style="cursor:pointer;"><strong>На страницах (${img.pages.length})</strong></summary>
+                <div class="card-row"><span>Формат</span><span>${esc(img.format || "—")}</span></div>
+                <div class="card-row"><span>Размер</span><span>${esc(formatSize(img.file_size))}</span></div>
+                <div class="card-row">
+                    <span>Файл</span>
+                    <span><a href="${esc(safeUrl(img.image_url))}" target="_blank" rel="noopener noreferrer">открыть</a></span>
+                </div>
+                <details class="card-links">
+                    <summary>На страницах (${img.pages.length})</summary>
                     ${pagesHtml}
                 </details>
-            </div>
-        `;
+            </div>`;
 
         const checkbox = card.querySelector(".card-checkbox");
-        checkbox.addEventListener("change", () => {
-            toggleSelectMultiple(img.ids, checkbox.checked);
-            card.classList.toggle("selected", checkbox.checked);
-        });
+        const toggle = checked => {
+            toggleSelectMultiple(img.ids, checked);
+            card.classList.toggle("selected", checked);
+        };
 
-        card.addEventListener("click", (e) => {
-            if (e.target.type !== "checkbox" && e.target.tagName !== "A" && !e.target.closest("details")) {
-                checkbox.checked = !checkbox.checked;
-                toggleSelectMultiple(img.ids, checkbox.checked);
-                card.classList.toggle("selected", checkbox.checked);
-            }
+        checkbox.addEventListener("change", () => toggle(checkbox.checked));
+        card.addEventListener("click", e => {
+            if (e.target.type === "checkbox" || e.target.tagName === "A" || e.target.closest("details")) return;
+            checkbox.checked = !checkbox.checked;
+            toggle(checkbox.checked);
         });
 
         gallery.appendChild(card);
@@ -253,7 +425,9 @@ function toggleSelectMultiple(ids, checked) {
 }
 
 function selectAll() {
-    allImages.forEach(img => img.ids.forEach(id => selectedIds.add(id)));
+    const all = allImages.every(img => img.ids.some(id => selectedIds.has(id)));
+    selectedIds.clear();
+    if (!all) allImages.forEach(img => img.ids.forEach(id => selectedIds.add(id)));
     renderGallery();
 }
 
@@ -263,18 +437,18 @@ function exportList() {
         .filter(img => img.ids.some(id => selectedIds.has(id)))
         .map(img => img.image_url);
 
-    if (urls.length === 0) {
-        alert("Отметь хотя бы одну картинку");
+    if (!urls.length) {
+        alert("Отметьте хотя бы одно изображение");
         return;
     }
 
     const blob = new Blob([urls.join("\n") + "\n"], { type: "text/plain" });
-    const url = window.URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "delete-images.txt";
     document.body.appendChild(a);
     a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    a.remove();
 }

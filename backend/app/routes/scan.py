@@ -6,7 +6,9 @@ from ..scanner import scan_site_async
 from ..models import User, Project, Scan, ScanStatus
 from ..net_guard import check_public_url
 from .. import ratelimit
-from datetime import datetime
+from ..maintenance import RETENTION_DAYS
+from datetime import datetime, timedelta
+from typing import Optional
 
 router = APIRouter()
 
@@ -24,10 +26,13 @@ class ScanResponse(BaseModel):
 class ScanStatusResponse(BaseModel):
     token: str
     status: str
+    site_url: str
     total_images: int
     total_pages: int
     scanned_pages: int
     progress: int  # 0-100%
+    # Срок считает сервер: только он знает RETENTION_DAYS
+    expires_at: Optional[str] = None
 
 
 def get_scan_by_token(token: str, db: Session) -> Scan:
@@ -146,11 +151,17 @@ async def get_scan_status(token: str, db: Session = Depends(get_db)):
     if scan.total_pages and scan.total_pages > 0:
         progress = min(100, int((scan.scanned_pages or 0) * 100 / scan.total_pages))
 
+    expires_at = None
+    if RETENTION_DAYS > 0 and scan.created_at:
+        expires_at = (scan.created_at + timedelta(days=RETENTION_DAYS)).isoformat()
+
     return ScanStatusResponse(
         token=scan.token,
         status=scan.status.value,
+        site_url=scan.project.site_url if scan.project else "",
         total_images=scan.total_images or 0,
         total_pages=scan.total_pages or 0,
         scanned_pages=scan.scanned_pages or 0,
-        progress=progress
+        progress=progress,
+        expires_at=expires_at,
     )
