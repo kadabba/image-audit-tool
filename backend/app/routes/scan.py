@@ -49,7 +49,7 @@ async def _run_scan_background(scan_id: int, site_url: str):
         scan = db.query(Scan).filter(Scan.id == scan_id).first()
         if scan:
             scan.status = ScanStatus.completed
-            scan.total_images = result["count"]
+            scan.total_images = result["unique"]
             scan.completed_at = datetime.utcnow()
             db.commit()
     except Exception as e:

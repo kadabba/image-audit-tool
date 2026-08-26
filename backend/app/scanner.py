@@ -9,6 +9,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 from bs4 import BeautifulSoup
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .audit_copyright import analyze_copyright_risk
@@ -234,8 +235,16 @@ async def scan_site_async(db: Session, scan_id: int, site_url: str):
             scan.scanned_pages = min(start + BATCH_SIZE, len(pages))
         db.commit()
 
-    print(f"Всего найдено и сохранено: {count}")
-    return {"count": count}
+    # Считаем уникальные картинки: строка заводится на каждое размещение,
+    # а в галерее сквозной логотип — одна карточка, а не сотня.
+    unique = (
+        db.query(func.count(func.distinct(Image.image_url)))
+        .filter(Image.scan_id == scan_id)
+        .scalar()
+    ) or 0
+
+    print(f"Найдено {unique} уникальных картинок ({count} размещений)")
+    return {"count": count, "unique": unique}
 
 
 def demo():
